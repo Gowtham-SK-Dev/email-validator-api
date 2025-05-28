@@ -1,4 +1,5 @@
 import { promises as dns } from "dns"
+import { testGoogleSignin } from "./googleSigninTest"
 
 interface ValidationResult {
   passed: boolean
@@ -95,6 +96,16 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   // 5. Reputation Check
   const reputationAnalysis = await checkDomainReputation(domain)
 
+  // Google Sign-in existence check
+  let googleSigninResult: { status: string; message: string } | null = null
+  if (domain.toLowerCase() === "gmail.com") {
+    try {
+      googleSigninResult = await testGoogleSignin(email)
+    } catch (e) {
+      googleSigninResult = { status: "fail", message: "Google sign-in check failed" }
+    }
+  }
+
   // Calculate confidence score with proper normalization
   const confidence = calculateConfidenceScore({
     domainAnalysis,
@@ -105,17 +116,32 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   })
 
   // Make final decision based on confidence threshold
-  const passed = confidence >= 60 // Lowered from 70 to 60 for more lenient validation
+  let passed = confidence >= 60 // Lowered from 70 to 60 for more lenient validation
+  let message = generateSmartMessage(passed, confidence, {
+    domainAnalysis,
+    localPartAnalysis,
+    mxAnalysis,
+    patternAnalysis,
+    reputationAnalysis,
+  })
+
+  // Adjust result based on Google sign-in test (for gmail.com)
+  if (googleSigninResult) {
+    if (googleSigninResult.status === "error") {
+      passed = false
+      message = `Google sign-in: ${googleSigninResult.message}`
+    } else if (googleSigninResult.status === "success") {
+      passed = true
+      message = `Google sign-in: ${googleSigninResult.message}`
+    } else {
+      // unknown/fail, keep previous result but append info
+      message += ` | Google sign-in: ${googleSigninResult.message}`
+    }
+  }
 
   return {
     passed,
-    message: generateSmartMessage(passed, confidence, {
-      domainAnalysis,
-      localPartAnalysis,
-      mxAnalysis,
-      patternAnalysis,
-      reputationAnalysis,
-    }),
+    message,
     confidence,
     details: {
       domainAnalysis,
@@ -123,6 +149,7 @@ async function performSmartValidation(email: string, domain: string, localPart: 
       mxAnalysis,
       patternAnalysis,
       reputationAnalysis,
+      googleSigninResult,
     },
   }
 }
