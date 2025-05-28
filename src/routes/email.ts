@@ -7,10 +7,16 @@ import { isRoleEmail } from "../utils/isRoleEmail"
 
 const router = express.Router()
 
+interface MxRecordWithIp {
+  exchange: string
+  priority: number
+  ipAddresses?: string[]
+}
+
 interface ValidationResult {
   passed: boolean
   message: string
-  records?: any[]
+  records?: MxRecordWithIp[]
 }
 
 interface EmailValidationResponse {

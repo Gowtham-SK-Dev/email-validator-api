@@ -1,9 +1,15 @@
 import { promises as dns } from "dns"
 
+interface MxRecordWithIp {
+  exchange: string
+  priority: number
+  ipAddresses?: string[]
+}
+
 interface ValidationResult {
   passed: boolean
   message: string
-  records?: Array<{ exchange: string; priority: number }>
+  records?: MxRecordWithIp[]
 }
 
 export async function validateMx(email: string): Promise<ValidationResult> {
@@ -27,13 +33,29 @@ export async function validateMx(email: string): Promise<ValidationResult> {
       }
     }
 
+    // For each MX record, resolve its IP addresses (A and AAAA)
+    const recordsWithIp: MxRecordWithIp[] = await Promise.all(
+      mxRecords.map(async (record) => {
+        const exchange = record.exchange
+        let ipAddresses: string[] = []
+        try {
+          const aRecords = await dns.resolve4(exchange)
+          ipAddresses = ipAddresses.concat(aRecords)
+        } catch {}
+        try {
+          const aaaaRecords = await dns.resolve6(exchange)
+          ipAddresses = ipAddresses.concat(aaaaRecords)
+        } catch {}
+        return {
+          exchange,
+          priority: record.priority,
+          ipAddresses,
+        }
+      })
+    )
+
     // Sort by priority (lower number = higher priority)
-    const sortedRecords = mxRecords
-      .sort((a, b) => a.priority - b.priority)
-      .map((record) => ({
-        exchange: record.exchange,
-        priority: record.priority,
-      }))
+    const sortedRecords = recordsWithIp.sort((a, b) => a.priority - b.priority)
 
     return {
       passed: true,
