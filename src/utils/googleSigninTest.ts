@@ -17,25 +17,18 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
     // Click the Next button
     await page.click("#identifierNext button, button[jsname='LgbsSe']")
 
-    // Wait for either password input or error message
+    // Wait for error message or navigation to password step
     await page.waitForTimeout(2000) // Wait for UI to update
 
     // Check for error message
     const error = await page.$eval('div[jsname="B34EJ"]', el => el.textContent).catch(() => null)
-    if (error) {
-      await browser.close()
-      return { status: "error", message: error.trim() }
-    }
-
-    // Check if password input is present (means email is valid)
-    const passwordInput = await page.$('input[type="password"]')
-    if (passwordInput) {
-      await browser.close()
-      return { status: "success", message: "Email accepted, password prompt shown." }
-    }
-
     await browser.close()
-    return { status: "unknown", message: "Could not determine result." }
+    if (error) {
+      return { status: "error", message: error.trim() }
+    } else {
+      // No error means valid email (exists in Google)
+      return { status: "success", message: "Email is valid (no error after Next)." }
+    }
   } catch (err: any) {
     await browser.close()
     return { status: "fail", message: err.message }
