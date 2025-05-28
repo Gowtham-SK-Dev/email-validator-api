@@ -1,3 +1,4 @@
+// Make sure to install puppeteer: npm install puppeteer
 import puppeteer from "puppeteer"
 
 export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
