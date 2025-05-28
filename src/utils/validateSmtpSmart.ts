@@ -71,11 +71,15 @@ export async function validateSmtpSmart(email: string): Promise<ValidationResult
 }
 
 async function performSmartValidation(email: string, domain: string, localPart: string): Promise<ValidationResult> {
+  console.log(`🔍 Starting smart validation for: ${email}`)
+
   // 1. Local Part Intelligence (check first - most likely to fail)
   const localPartAnalysis = analyzeLocalPart(localPart)
+  console.log(`📝 Local part analysis score: ${localPartAnalysis.score}`)
 
   // Early exit if local part is clearly invalid (more lenient threshold)
   if (localPartAnalysis.score < -30) {
+    console.log(`❌ Early exit - local part invalid: ${localPartAnalysis.invalidReason}`)
     return {
       passed: false,
       message: `Invalid email - ${localPartAnalysis.invalidReason || "Local part appears invalid"}`,
@@ -86,23 +90,40 @@ async function performSmartValidation(email: string, domain: string, localPart: 
 
   // 2. Domain Intelligence Analysis
   const domainAnalysis = await analyzeDomain(domain)
+  console.log(`🌐 Domain analysis score: ${domainAnalysis.score}`)
 
   // 3. MX Record Deep Analysis
   const mxAnalysis = await analyzeMxRecords(domain)
+  console.log(`📧 MX analysis score: ${mxAnalysis.score}`)
 
   // 4. Pattern Recognition
   const patternAnalysis = analyzeEmailPatterns(email)
+  console.log(`🔍 Pattern analysis score: ${patternAnalysis.score}`)
 
   // 5. Reputation Check
   const reputationAnalysis = await checkDomainReputation(domain)
+  console.log(`🛡️ Reputation analysis score: ${reputationAnalysis.score}`)
 
-  // Google Sign-in existence check
+  // 6. Google Sign-in existence check (IMPROVED)
   let googleSigninResult: { status: string; message: string } | null = null
   if (domain.toLowerCase() === "gmail.com") {
+    console.log(`🔐 Starting Google sign-in test for Gmail address: ${email}`)
+
     try {
-      googleSigninResult = await testGoogleSignin(email)
-    } catch (e) {
-      googleSigninResult = { status: "fail", message: "Google sign-in check failed" }
+      // Use the improved retry function with better error handling
+      googleSigninResult = await testGoogleSigninWithRetry(email, 2)
+      console.log(`🔐 Google sign-in result:`, googleSigninResult)
+
+      // Validate the result structure
+      if (!googleSigninResult || typeof googleSigninResult.status !== "string") {
+        throw new Error("Invalid response structure from Google sign-in test")
+      }
+    } catch (error) {
+      console.error(`🔐 Google sign-in test failed with error:`, error)
+      googleSigninResult = {
+        status: "technical_error",
+        message: `Google sign-in check failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      }
     }
   }
 
@@ -114,9 +135,10 @@ async function performSmartValidation(email: string, domain: string, localPart: 
     patternAnalysis,
     reputationAnalysis,
   })
+  console.log(`📊 Calculated confidence score: ${confidence}%`)
 
   // Make final decision based on confidence threshold
-  let passed = confidence >= 60 // Lowered from 70 to 60 for more lenient validation
+  let passed = confidence >= 60
   let message = generateSmartMessage(passed, confidence, {
     domainAnalysis,
     localPartAnalysis,
@@ -125,21 +147,65 @@ async function performSmartValidation(email: string, domain: string, localPart: 
     reputationAnalysis,
   })
 
-  // Adjust result based on Google sign-in test (for gmail.com)
+  console.log(`📋 Initial validation result: ${passed ? "PASSED" : "FAILED"} - ${message}`)
+
+  // IMPROVED: Apply Google sign-in results with better logic
   if (googleSigninResult) {
-    if (googleSigninResult.status === "error") {
-      passed = false
-      message = `Google sign-in: ${googleSigninResult.message}`
-    } else if (googleSigninResult.status === "success") {
-      passed = true
-      message = `Google sign-in: ${googleSigninResult.message}`
-    } else {
-      // unknown/fail, keep previous result but append info
-      message += ` | Google sign-in: ${googleSigninResult.message}`
+    console.log(`🔐 Applying Google sign-in result: ${googleSigninResult.status}`)
+
+    switch (googleSigninResult.status) {
+      case "success":
+        // Gmail account exists and is valid
+        passed = true
+        message = `✅ Gmail account verified: ${googleSigninResult.message}`
+        console.log(`🔐 ✅ Gmail verification SUCCESS - overriding to PASSED`)
+        break
+
+      case "error":
+        // Gmail account doesn't exist or has issues
+        const errorMsg = googleSigninResult.message.toLowerCase()
+
+        // Check if it's a definitive "account doesn't exist" error
+        if (
+          errorMsg.includes("couldn't find") ||
+          errorMsg.includes("doesn't exist") ||
+          errorMsg.includes("not found") ||
+          errorMsg.includes("invalid") ||
+          errorMsg.includes("incorrect") ||
+          errorMsg.includes("enter a valid email") ||
+          errorMsg.includes("try again")
+        ) {
+          passed = false
+          message = `❌ Gmail verification failed: ${googleSigninResult.message}`
+          console.log(`🔐 ❌ Gmail verification FAILED - overriding to FAILED`)
+        } else {
+          // Ambiguous error, don't override but append info
+          message += ` | Gmail check: ${googleSigninResult.message}`
+          console.log(`🔐 ⚠️ Gmail verification ambiguous error - keeping original result`)
+        }
+        break
+
+      case "unknown":
+        // Couldn't determine, append info but don't override
+        message += ` | Gmail check: ${googleSigninResult.message}`
+        console.log(`🔐 ❓ Gmail verification unknown - keeping original result`)
+        break
+
+      case "technical_error":
+        // Technical issue, append info but don't override validation result
+        message += ` | Gmail check failed: ${googleSigninResult.message}`
+        console.log(`🔐 🔧 Gmail verification technical error - keeping original result`)
+        break
+
+      default:
+        // Unexpected status, log and append
+        console.warn(`🔐 ⚠️ Unexpected Google sign-in status: ${googleSigninResult.status}`)
+        message += ` | Gmail check: ${googleSigninResult.message}`
+        break
     }
   }
 
-  return {
+  const finalResult = {
     passed,
     message,
     confidence,
@@ -152,6 +218,56 @@ async function performSmartValidation(email: string, domain: string, localPart: 
       googleSigninResult,
     },
   }
+
+  console.log(`🏁 Final validation result for ${email}: ${passed ? "PASSED" : "FAILED"} - ${message}`)
+  return finalResult
+}
+
+// Enhanced Google sign-in test with retry logic
+async function testGoogleSigninWithRetry(email: string, maxRetries = 2): Promise<{ status: string; message: string }> {
+  console.log(`🔐 Starting Google sign-in test for: ${email} (max retries: ${maxRetries})`)
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    console.log(`🔐 Attempt ${attempt}/${maxRetries} for email: ${email}`)
+
+    try {
+      const result = await testGoogleSignin(email)
+      console.log(`🔐 Attempt ${attempt} result:`, result)
+
+      // If we get a clear success or error, return it
+      if (result.status === "success" || result.status === "error") {
+        console.log(`🔐 Definitive result on attempt ${attempt}: ${result.status}`)
+        return result
+      }
+
+      // If unknown and we have retries left, try again
+      if (result.status === "unknown" && attempt < maxRetries) {
+        console.log(`🔐 Attempt ${attempt} returned unknown, retrying in 2 seconds...`)
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        continue
+      }
+
+      // Last attempt or non-retryable result
+      console.log(`🔐 Final attempt ${attempt} result: ${result.status}`)
+      return result
+    } catch (error) {
+      console.error(`🔐 Attempt ${attempt} failed with error:`, error)
+
+      if (attempt < maxRetries) {
+        console.log(`🔐 Retrying after error in 3 seconds...`)
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+        continue
+      }
+
+      // Last attempt failed
+      return {
+        status: "technical_error",
+        message: `All ${maxRetries} attempts failed. Last error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      }
+    }
+  }
+
+  return { status: "technical_error", message: "Max retries exceeded" }
 }
 
 // Enhanced Local Part Intelligence with culturally aware validation
