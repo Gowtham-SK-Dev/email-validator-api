@@ -1,0 +1,8 @@
+[build]
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/validate-email"
+  to = "/.netlify/functions/validate-email"
+  status = 200
+  force = true
