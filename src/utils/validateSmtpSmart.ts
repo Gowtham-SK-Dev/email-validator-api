@@ -104,6 +104,28 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   const reputationAnalysis = await checkDomainReputation(domain)
   console.log(`🛡️ Reputation analysis score: ${reputationAnalysis.score}`)
 
+  // Calculate confidence score with proper normalization
+  const confidence = calculateConfidenceScore({
+    domainAnalysis,
+    localPartAnalysis,
+    mxAnalysis,
+    patternAnalysis,
+    reputationAnalysis,
+  })
+  console.log(`📊 Calculated confidence score: ${confidence}%`)
+
+  // Make final decision based on confidence threshold
+  let passed = confidence >= 60
+  let message = generateSmartMessage(passed, confidence, {
+    domainAnalysis,
+    localPartAnalysis,
+    mxAnalysis,
+    patternAnalysis,
+    reputationAnalysis,
+  })
+
+  console.log(`📋 Initial validation result: ${passed ? "PASSED" : "FAILED"} - ${message}`)
+
   // 6. Google Sign-in existence check (IMPROVED)
   let googleSigninResult: { status: string; message: string } | null = null
   if (domain.toLowerCase() === "gmail.com") {
@@ -126,28 +148,6 @@ async function performSmartValidation(email: string, domain: string, localPart: 
       }
     }
   }
-
-  // Calculate confidence score with proper normalization
-  const confidence = calculateConfidenceScore({
-    domainAnalysis,
-    localPartAnalysis,
-    mxAnalysis,
-    patternAnalysis,
-    reputationAnalysis,
-  })
-  console.log(`📊 Calculated confidence score: ${confidence}%`)
-
-  // Make final decision based on confidence threshold
-  let passed = confidence >= 60
-  let message = generateSmartMessage(passed, confidence, {
-    domainAnalysis,
-    localPartAnalysis,
-    mxAnalysis,
-    patternAnalysis,
-    reputationAnalysis,
-  })
-
-  console.log(`📋 Initial validation result: ${passed ? "PASSED" : "FAILED"} - ${message}`)
 
   // IMPROVED: Apply Google sign-in results with better logic
   if (googleSigninResult) {
@@ -223,7 +223,7 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   return finalResult
 }
 
-// Enhanced Google sign-in test with retry logic
+// Enhanced Google sign-in test with retry logic and fallback
 async function testGoogleSigninWithRetry(email: string, maxRetries = 2): Promise<{ status: string; message: string }> {
   console.log(`🔐 Starting Google sign-in test for: ${email} (max retries: ${maxRetries})`)
 
@@ -259,15 +259,75 @@ async function testGoogleSigninWithRetry(email: string, maxRetries = 2): Promise
         continue
       }
 
-      // Last attempt failed
-      return {
-        status: "technical_error",
-        message: `All ${maxRetries} attempts failed. Last error: ${error instanceof Error ? error.message : "Unknown error"}`,
-      }
+      // Last attempt failed, try fallback validation
+      console.log(`🔐 All attempts failed, using fallback validation`)
+      return await fallbackEmailValidation(email)
     }
   }
 
   return { status: "technical_error", message: "Max retries exceeded" }
+}
+
+// Fallback validation when Puppeteer fails
+async function fallbackEmailValidation(email: string): Promise<{ status: string; message: string }> {
+  console.log(`🔄 Using fallback validation for: ${email}`)
+
+  if (!email.endsWith("@gmail.com")) {
+    return {
+      status: "unknown",
+      message: "Fallback validation only works for Gmail addresses",
+    }
+  }
+
+  try {
+    // Simple check - valid Gmail addresses must:
+    // - Be between 6-30 characters before the @ symbol
+    // - Start with a letter
+    // - Contain only letters, numbers, dots, and underscores
+    // - Not have consecutive dots
+
+    const localPart = email.split("@")[0]
+
+    if (localPart.length < 6 || localPart.length > 30) {
+      return {
+        status: "error",
+        message: "Gmail addresses must be between 6-30 characters before @gmail.com",
+      }
+    }
+
+    if (!/^[a-z]/.test(localPart.toLowerCase())) {
+      return {
+        status: "error",
+        message: "Gmail addresses must start with a letter",
+      }
+    }
+
+    if (!/^[a-z0-9._]+$/i.test(localPart)) {
+      return {
+        status: "error",
+        message: "Gmail addresses can only contain letters, numbers, dots, and underscores",
+      }
+    }
+
+    if (localPart.includes("..")) {
+      return {
+        status: "error",
+        message: "Gmail addresses cannot contain consecutive dots",
+      }
+    }
+
+    // If it passes all these checks, we can't definitively say it exists,
+    // but it's at least syntactically valid
+    return {
+      status: "unknown",
+      message: "Email format is valid for Gmail, but existence couldn't be verified due to technical limitations",
+    }
+  } catch (error) {
+    return {
+      status: "technical_error",
+      message: `Fallback validation error: ${error instanceof Error ? error.message : "Unknown error"}`,
+    }
+  }
 }
 
 // Enhanced Local Part Intelligence with culturally aware validation
@@ -542,7 +602,7 @@ function looksLikeRealName(name: string): boolean {
   )
 }
 
-// Calculate entropy of a string (same as before)
+// Calculate entropy of a string
 function calculateEntropy(str: string): number {
   const freq: { [key: string]: number } = {}
 
@@ -561,7 +621,7 @@ function calculateEntropy(str: string): number {
   return entropy
 }
 
-// Domain Intelligence Analysis - Same as before
+// Domain Intelligence Analysis
 async function analyzeDomain(domain: string): Promise<AnalysisResult> {
   const analysis: AnalysisResult = {
     isKnownProvider: false,
@@ -607,7 +667,7 @@ async function analyzeDomain(domain: string): Promise<AnalysisResult> {
   return analysis
 }
 
-// MX Record Deep Analysis - Same as before
+// MX Record Deep Analysis
 async function analyzeMxRecords(domain: string): Promise<AnalysisResult> {
   const analysis: AnalysisResult = {
     recordCount: 0,
@@ -666,7 +726,7 @@ async function analyzeMxRecords(domain: string): Promise<AnalysisResult> {
   return analysis
 }
 
-// Pattern Recognition - Same as before
+// Pattern Recognition
 function analyzeEmailPatterns(email: string): AnalysisResult {
   const analysis: AnalysisResult = {
     isCommonPattern: false,
@@ -703,7 +763,7 @@ function analyzeEmailPatterns(email: string): AnalysisResult {
   return analysis
 }
 
-// Domain Reputation Check - Same as before
+// Domain Reputation Check
 async function checkDomainReputation(domain: string): Promise<AnalysisResult> {
   const analysis: AnalysisResult = {
     hasSpfRecord: false,
@@ -773,7 +833,7 @@ function calculateConfidenceScore(analyses: {
   return Math.round(Math.max(0, Math.min(100, confidence)))
 }
 
-// Enhanced smart message generator - Same as before
+// Enhanced smart message generator
 function generateSmartMessage(
   passed: boolean,
   confidence: number,
@@ -828,7 +888,7 @@ function generateSmartMessage(
   }
 }
 
-// Cache management - Same as before
+// Cache management
 function getCachedResult(domain: string): ValidationResult | null {
   const cached = validationCache[domain]
   if (cached && Date.now() - cached.timestamp < cached.ttl) {
