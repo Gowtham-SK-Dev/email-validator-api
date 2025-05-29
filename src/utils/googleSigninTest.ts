@@ -1,32 +1,55 @@
 import puppeteer from "puppeteer"
+import fs from "fs"
+import path from "path"
+
+// Load Chrome configuration
+function loadChromeConfig() {
+  const configPath = path.join(process.cwd(), "puppeteer-config.json")
+
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"))
+      console.log("✅ Using saved Chrome configuration")
+      return config
+    } catch (error) {
+      console.warn("⚠️ Could not load saved config, using defaults")
+    }
+  }
+
+  // Default configuration (fallback)
+  return {
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-web-security",
+      "--disable-features=VizDisplayCompositor",
+      "--no-first-run",
+      "--disable-extensions",
+      "--disable-plugins",
+      "--disable-images",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--window-size=1280,720",
+    ],
+    defaultViewport: { width: 1280, height: 720 },
+  }
+}
 
 export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
   console.log(`🔐 Starting Google sign-in test for: ${email}`)
 
   let browser
   try {
-    // Launch browser with optimized configuration
-    browser = await puppeteer.launch({
-      headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-web-security",
-        "--disable-features=VizDisplayCompositor",
-        "--no-first-run",
-        "--disable-extensions",
-        "--disable-plugins",
-        "--disable-images",
-        "--disable-javascript-harmony-shipping",
-        "--disable-background-timer-throttling",
-        "--disable-backgrounding-occluded-windows",
-        "--disable-renderer-backgrounding",
-        "--window-size=1280,720",
-      ],
-      defaultViewport: { width: 1280, height: 720 },
-    })
+    // Use the saved Chrome configuration
+    const chromeConfig = loadChromeConfig()
+    console.log(`🔧 Using Chrome: ${chromeConfig.executablePath ? "Custom installation" : "Bundled Chromium"}`)
+
+    // Launch browser with the proper configuration
+    browser = await puppeteer.launch(chromeConfig)
 
     const page = await browser.newPage()
 
@@ -210,6 +233,15 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
     if (browser) {
       await browser.close().catch((e) => console.error("Error closing browser:", e))
     }
+
+    // Provide more specific error handling
+    if ((error as Error).message.includes("Could not find expected browser")) {
+      return {
+        status: "technical_error",
+        message: "Chrome browser not found. Please run the setup script first: npm run setup-puppeteer",
+      }
+    }
+
     return {
       status: "technical_error",
       message: `Puppeteer error: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -263,46 +295,4 @@ export async function testGoogleSigninWithRetry(
   }
 
   return { status: "technical_error", message: "Max retries exceeded" }
-}
-
-// Alternative Gmail validation (simplified - only for format checking)
-async function alternativeGmailValidation(email: string): Promise<{ status: string; message: string }> {
-  console.log(`🔄 Using alternative Gmail validation for: ${email}`)
-
-  if (!email.endsWith("@gmail.com")) {
-    return {
-      status: "error",
-      message: "Not a Gmail address",
-    }
-  }
-
-  const localPart = email.split("@")[0]
-
-  // Basic Gmail format validation
-  if (localPart.length < 6 || localPart.length > 30) {
-    return {
-      status: "error",
-      message: "Gmail addresses must be between 6-30 characters",
-    }
-  }
-
-  if (!/^[a-z0-9._]+$/i.test(localPart)) {
-    return {
-      status: "error",
-      message: "Gmail addresses can only contain letters, numbers, dots, and underscores",
-    }
-  }
-
-  if (localPart.includes("..") || localPart.startsWith(".") || localPart.endsWith(".")) {
-    return {
-      status: "error",
-      message: "Invalid dot placement in Gmail address",
-    }
-  }
-
-  // If format is valid but we can't verify existence
-  return {
-    status: "unknown",
-    message: "Gmail format is valid but existence could not be verified",
-  }
 }
