@@ -10,12 +10,12 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
 
   if (isServerless) {
     console.log("🌩️ Detected serverless environment, using alternative validation")
-    // return await alternativeGmailValidation(email)
+    return await alternativeGmailValidation(email)
   }
-//   return {
-//         status: "error",
-//         message: "1",
-//       }
+  return {
+        status: "error",
+        message: "1",
+      }
   let browser
   try {
     // Try different Chrome installation approaches
