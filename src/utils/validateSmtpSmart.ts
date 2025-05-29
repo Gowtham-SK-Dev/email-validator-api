@@ -38,7 +38,6 @@ export async function validateSmtpSmart(email: string): Promise<ValidationResult
 
     // If local part is clearly invalid, override cached result
     if (localPartAnalysis.score < -30) {
-      // More lenient threshold
       return {
         passed: false,
         message: `Invalid email - ${localPartAnalysis.invalidReason || "Local part appears invalid"}`,
@@ -77,7 +76,7 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   const localPartAnalysis = analyzeLocalPart(localPart)
   console.log(`📝 Local part analysis score: ${localPartAnalysis.score}`)
 
-  // Early exit if local part is clearly invalid (more lenient threshold)
+  // Early exit if local part is clearly invalid
   if (localPartAnalysis.score < -30) {
     console.log(`❌ Early exit - local part invalid: ${localPartAnalysis.invalidReason}`)
     return {
@@ -126,14 +125,14 @@ async function performSmartValidation(email: string, domain: string, localPart: 
 
   console.log(`📋 Initial validation result: ${passed ? "PASSED" : "FAILED"} - ${message}`)
 
-  // 6. Google Sign-in existence check (IMPROVED with better fallback)
+  // 6. Google Sign-in existence check (ONLY for Gmail)
   let googleSigninResult: { status: string; message: string } | null = null
   if (domain.toLowerCase() === "gmail.com") {
     console.log(`🔐 Starting Google sign-in test for Gmail address: ${email}`)
 
     try {
-      // Use the improved retry function with immediate fallback
-      googleSigninResult = await testGoogleSigninWithRetry(email, 1) // Only 1 retry since we have good fallback
+      // Use the improved retry function
+      googleSigninResult = await testGoogleSigninWithRetry(email, 2)
       console.log(`🔐 Google sign-in result:`, googleSigninResult)
 
       // Validate the result structure
@@ -149,64 +148,35 @@ async function performSmartValidation(email: string, domain: string, localPart: 
     }
   }
 
-  // IMPROVED: Apply Google sign-in results with better logic
+  // Apply Google sign-in results with improved logic
   if (googleSigninResult) {
     console.log(`🔐 Applying Google sign-in result: ${googleSigninResult.status}`)
 
     switch (googleSigninResult.status) {
       case "success":
-        // Gmail account exists and is valid
+        // Gmail account exists and is valid - OVERRIDE to success
         passed = true
         message = `✅ Gmail account verified: ${googleSigninResult.message}`
         console.log(`🔐 ✅ Gmail verification SUCCESS - overriding to PASSED`)
         break
 
       case "error":
-        // Gmail account doesn't exist or has issues
-        const errorMsg = googleSigninResult.message.toLowerCase()
-
-        // Check if it's a definitive "account doesn't exist" error
-        if (
-          errorMsg.includes("couldn't find") ||
-          errorMsg.includes("doesn't exist") ||
-          errorMsg.includes("not found") ||
-          errorMsg.includes("invalid") ||
-          errorMsg.includes("incorrect") ||
-          errorMsg.includes("enter a valid email") ||
-          errorMsg.includes("try again") ||
-          errorMsg.includes("must be between") ||
-          errorMsg.includes("must start with") ||
-          errorMsg.includes("can only contain") ||
-          errorMsg.includes("cannot contain") ||
-          errorMsg.includes("appears invalid")
-        ) {
-          passed = false
-          message = `❌ Gmail verification failed: ${googleSigninResult.message}`
-          console.log(`🔐 ❌ Gmail verification FAILED - overriding to FAILED`)
-        } else {
-          // Ambiguous error, don't override but append info
-          message += ` | Gmail check: ${googleSigninResult.message}`
-          console.log(`🔐 ⚠️ Gmail verification ambiguous error - keeping original result`)
-        }
-        break
-
-      case "unknown":
-        // Alternative validation passed but couldn't verify existence
-        // This is actually a good sign - the format is valid
-        if (googleSigninResult.message.includes("format validation passed")) {
-          // Don't override but give it a slight boost
-          message += ` | Gmail format verified: ${googleSigninResult.message}`
-          console.log(`🔐 ✅ Gmail format verification - keeping original result with boost`)
-        } else {
-          message += ` | Gmail check: ${googleSigninResult.message}`
-          console.log(`🔐 ❓ Gmail verification unknown - keeping original result`)
-        }
+        // Gmail account doesn't exist or has issues - OVERRIDE to failure
+        passed = false
+        message = `❌ Gmail verification failed: ${googleSigninResult.message}`
+        console.log(`🔐 ❌ Gmail verification FAILED - overriding to FAILED`)
         break
 
       case "technical_error":
-        // Technical issue, append info but don't override validation result
+        // Technical issue, don't override but append info
         message += ` | Gmail check failed: ${googleSigninResult.message}`
         console.log(`🔐 🔧 Gmail verification technical error - keeping original result`)
+        break
+
+      case "unknown":
+        // This should rarely happen with the improved code
+        message += ` | Gmail check inconclusive: ${googleSigninResult.message}`
+        console.log(`🔐 ❓ Gmail verification unknown - keeping original result`)
         break
 
       default:
@@ -235,9 +205,7 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   return finalResult
 }
 
-// All your existing helper functions remain the same...
-// (I'm keeping them as they were in your original file)
-
+// Helper functions (keeping your existing implementations)
 function analyzeLocalPart(localPart: string): AnalysisResult {
   const analysis: AnalysisResult = {
     length: localPart.length,
