@@ -5,6 +5,7 @@ import path from "path"
 
 /**
  * Comprehensive Chrome detection and installation for Puppeteer
+ * Handles invalid paths, auto-detection, and fallbacks
  */
 export class PuppeteerChromeManager {
   private platform: string
@@ -25,7 +26,8 @@ export class PuppeteerChromeManager {
       process.env.RAILWAY_ENVIRONMENT ||
       process.env.RENDER ||
       process.env.HEROKU_APP_NAME ||
-      process.env.FUNCTIONS_WORKER
+      process.env.FUNCTIONS_WORKER ||
+      process.env.VERCEL_ENV
     )
   }
 
@@ -42,21 +44,69 @@ export class PuppeteerChromeManager {
         "/snap/bin/chromium",
         "/usr/local/bin/chrome",
         "/opt/google/chrome/chrome",
+        "/usr/bin/google-chrome-unstable",
+        "/usr/bin/chromium-browser-stable",
       ],
       darwin: [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "/Applications/Chromium.app/Contents/MacOS/Chromium",
         "/usr/local/bin/chrome",
+        "/opt/homebrew/bin/chrome",
       ],
       win32: [
         "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
         "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-        "C:\\Users\\%USERNAME%\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe",
+        `C:\\Users\\${os.userInfo().username}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe`,
         "C:\\Program Files\\Chromium\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Chromium\\Application\\chrome.exe",
       ],
     }
 
     return paths[this.platform] || paths.linux
+  }
+
+  /**
+   * Validate and clean environment variable
+   */
+  private validateEnvironmentPath(): string | null {
+    const envPath = process.env.PUPPETEER_EXECUTABLE_PATH
+
+    if (!envPath) {
+      return null
+    }
+
+    // Check for placeholder or invalid paths
+    const invalidPaths = [
+      "/path/to/chrome",
+      "/path/to/chromium",
+      "path/to/chrome",
+      "C:\\path\\to\\chrome.exe",
+      "/usr/bin/chrome-placeholder",
+    ]
+
+    if (invalidPaths.includes(envPath) || envPath.includes("placeholder") || envPath.includes("/path/to/")) {
+      console.warn(`⚠️ PUPPETEER_EXECUTABLE_PATH contains placeholder value: ${envPath}`)
+      console.warn("⚠️ Unsetting invalid environment variable")
+      delete process.env.PUPPETEER_EXECUTABLE_PATH
+      return null
+    }
+
+    // Check if path exists
+    try {
+      if (fs.existsSync(envPath)) {
+        fs.accessSync(envPath, fs.constants.F_OK | fs.constants.X_OK)
+        console.log(`✅ Using valid PUPPETEER_EXECUTABLE_PATH: ${envPath}`)
+        return envPath
+      } else {
+        console.warn(`⚠️ PUPPETEER_EXECUTABLE_PATH path doesn't exist: ${envPath}`)
+        delete process.env.PUPPETEER_EXECUTABLE_PATH
+        return null
+      }
+    } catch (error) {
+      console.warn(`⚠️ PUPPETEER_EXECUTABLE_PATH is not accessible: ${envPath}`)
+      delete process.env.PUPPETEER_EXECUTABLE_PATH
+      return null
+    }
   }
 
   /**
@@ -65,18 +115,23 @@ export class PuppeteerChromeManager {
   findChromeExecutable(): string | null {
     console.log(`🔍 Searching for Chrome executable on ${this.platform}...`)
 
+    // First check environment variable
+    const envPath = this.validateEnvironmentPath()
+    if (envPath) {
+      this.chromeExecutablePath = envPath
+      return envPath
+    }
+
     const possiblePaths = this.getChromePaths()
 
     for (const chromePath of possiblePaths) {
-      const expandedPath = chromePath.replace("%USERNAME%", os.userInfo().username)
-
       try {
-        if (fs.existsSync(expandedPath)) {
+        if (fs.existsSync(chromePath)) {
           // Verify it's executable
-          fs.accessSync(expandedPath, fs.constants.F_OK | fs.constants.X_OK)
-          console.log(`✅ Found Chrome at: ${expandedPath}`)
-          this.chromeExecutablePath = expandedPath
-          return expandedPath
+          fs.accessSync(chromePath, fs.constants.F_OK | fs.constants.X_OK)
+          console.log(`✅ Found Chrome at: ${chromePath}`)
+          this.chromeExecutablePath = chromePath
+          return chromePath
         }
       } catch (error) {
         // Continue searching
@@ -84,6 +139,66 @@ export class PuppeteerChromeManager {
     }
 
     console.log("❌ No existing Chrome installation found")
+    return null
+  }
+
+  /**
+   * Find Chrome installed by Puppeteer
+   */
+  private findPuppeteerChrome(): string | null {
+    const possiblePuppeteerPaths = [
+      // Local node_modules
+      path.join(process.cwd(), "node_modules", "puppeteer", ".local-chromium"),
+      path.join(process.cwd(), "node_modules", "@puppeteer", "browsers"),
+      // Global cache
+      path.join(os.homedir(), ".cache", "puppeteer"),
+      path.join(os.homedir(), ".cache", "ms-playwright"),
+      // Windows
+      path.join(os.homedir(), "AppData", "Local", "ms-playwright"),
+      // macOS
+      path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
+    ]
+
+    const findChromeInDir = (dir: string, depth = 0): string | null => {
+      if (depth > 4) return null // Prevent deep recursion
+
+      try {
+        if (!fs.existsSync(dir)) return null
+
+        const items = fs.readdirSync(dir)
+        for (const item of items) {
+          const itemPath = path.join(dir, item)
+
+          try {
+            const stat = fs.statSync(itemPath)
+
+            if (stat.isDirectory()) {
+              const result = findChromeInDir(itemPath, depth + 1)
+              if (result) return result
+            } else if (
+              (item === "chrome" || item === "chrome.exe" || item === "chromium" || item === "chromium.exe") &&
+              stat.mode & Number.parseInt("111", 8) // Check if executable
+            ) {
+              return itemPath
+            }
+          } catch (error) {
+            // Skip files we can't access
+          }
+        }
+      } catch (error) {
+        // Directory not accessible
+      }
+      return null
+    }
+
+    for (const basePath of possiblePuppeteerPaths) {
+      const chromeExe = findChromeInDir(basePath)
+      if (chromeExe) {
+        console.log(`✅ Found Puppeteer Chrome at: ${chromeExe}`)
+        return chromeExe
+      }
+    }
+
     return null
   }
 
@@ -114,7 +229,7 @@ export class PuppeteerChromeManager {
         console.warn("⚠️ Puppeteer installer failed:", (error as Error).message)
       }
 
-      // Method 2: Platform-specific installation
+      // Method 2: Platform-specific installation (only if not serverless)
       if (!this.isServerless) {
         console.log("📦 Method 2: Platform-specific installation...")
         await this.installChromeByPlatform()
@@ -133,61 +248,6 @@ export class PuppeteerChromeManager {
   }
 
   /**
-   * Find Chrome installed by Puppeteer
-   */
-  private findPuppeteerChrome(): string | null {
-    const possiblePuppeteerPaths = [
-      // Local node_modules
-      path.join(process.cwd(), "node_modules", "puppeteer", ".local-chromium"),
-      // Global cache
-      path.join(os.homedir(), ".cache", "puppeteer"),
-      path.join(os.homedir(), ".cache", "ms-playwright"),
-      // Windows
-      path.join(os.homedir(), "AppData", "Local", "ms-playwright"),
-    ]
-
-    for (const basePath of possiblePuppeteerPaths) {
-      try {
-        if (fs.existsSync(basePath)) {
-          // Look for Chrome executable in subdirectories
-          const findChromeInDir = (dir: string): string | null => {
-            try {
-              const items = fs.readdirSync(dir)
-              for (const item of items) {
-                const itemPath = path.join(dir, item)
-                const stat = fs.statSync(itemPath)
-
-                if (stat.isDirectory()) {
-                  const result = findChromeInDir(itemPath)
-                  if (result) return result
-                } else if (
-                  (item === "chrome" || item === "chrome.exe" || item === "chromium") &&
-                  stat.mode & Number.parseInt("111", 8) // Check if executable
-                ) {
-                  return itemPath
-                }
-              }
-            } catch (error) {
-              // Continue searching
-            }
-            return null
-          }
-
-          const chromeExe = findChromeInDir(basePath)
-          if (chromeExe) {
-            console.log(`✅ Found Puppeteer Chrome at: ${chromeExe}`)
-            return chromeExe
-          }
-        }
-      } catch (error) {
-        // Continue searching
-      }
-    }
-
-    return null
-  }
-
-  /**
    * Install Chrome using platform-specific package managers
    */
   private async installChromeByPlatform(): Promise<void> {
@@ -197,14 +257,21 @@ export class PuppeteerChromeManager {
           console.log("🐧 Installing Chrome on Linux...")
           try {
             // Try apt-get first (Ubuntu/Debian)
-            execSync("sudo apt-get update && sudo apt-get install -y google-chrome-stable", { stdio: "inherit" })
+            execSync("sudo apt-get update && sudo apt-get install -y google-chrome-stable", {
+              stdio: "inherit",
+              timeout: 180000, // 3 minutes
+            })
           } catch {
             try {
               // Try yum (CentOS/RHEL)
               execSync("sudo yum install -y google-chrome-stable", { stdio: "inherit" })
             } catch {
-              // Try snap
-              execSync("sudo snap install chromium", { stdio: "inherit" })
+              try {
+                // Try snap
+                execSync("sudo snap install chromium", { stdio: "inherit" })
+              } catch {
+                console.warn("⚠️ All Linux installation methods failed")
+              }
             }
           }
           break
@@ -216,12 +283,13 @@ export class PuppeteerChromeManager {
             execSync("brew install --cask google-chrome", { stdio: "inherit" })
           } catch {
             console.log("⚠️ Homebrew not available or failed")
+            console.log("💡 Please install Chrome manually from: https://www.google.com/chrome/")
           }
           break
 
         case "win32":
           console.log("🪟 Chrome installation on Windows requires manual download")
-          console.log("Please download Chrome from: https://www.google.com/chrome/")
+          console.log("💡 Please download Chrome from: https://www.google.com/chrome/")
           break
 
         default:
@@ -241,8 +309,8 @@ export class PuppeteerChromeManager {
     // First, try to find existing Chrome
     let executablePath = this.findChromeExecutable()
 
-    // If not found, try to install
-    if (!executablePath) {
+    // If not found and not serverless, try to install
+    if (!executablePath && !this.isServerless) {
       console.log("🔧 Chrome not found, attempting installation...")
       try {
         executablePath = await this.installChrome()
@@ -282,7 +350,14 @@ export class PuppeteerChromeManager {
 
     // Additional args for serverless environments
     if (this.isServerless) {
-      config.args.push("--single-process", "--no-zygote", "--disable-gpu", "--disable-software-rasterizer")
+      config.args.push(
+        "--single-process",
+        "--no-zygote",
+        "--disable-gpu",
+        "--disable-software-rasterizer",
+        "--disable-dev-tools",
+      )
+      console.log("🌐 Applied serverless optimizations")
     }
 
     return config
@@ -305,7 +380,10 @@ export class PuppeteerChromeManager {
       const page = await browser.newPage()
 
       console.log("🧪 Navigating to test URL...")
-      await page.goto("https://example.com", { waitUntil: "networkidle0", timeout: 10000 })
+      await page.goto("https://example.com", {
+        waitUntil: "networkidle0",
+        timeout: 15000,
+      })
 
       const title = await page.title()
       console.log(`🧪 Page title: ${title}`)
