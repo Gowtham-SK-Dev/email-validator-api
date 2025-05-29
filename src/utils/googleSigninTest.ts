@@ -10,9 +10,12 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
 
   if (isServerless) {
     console.log("🌩️ Detected serverless environment, using alternative validation")
-    return await alternativeGmailValidation(email)
+    // return await alternativeGmailValidation(email)
   }
-
+//   return {
+//         status: "error",
+//         message: "1",
+//       }
   let browser
   try {
     // Try different Chrome installation approaches
@@ -184,7 +187,7 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
 
     // If Puppeteer fails, fall back to alternative validation
     console.log("🔄 Puppeteer failed, using alternative validation")
-    // return await alternativeGmailValidation(email)
+    return await alternativeGmailValidation(email)
   }
 }
 
