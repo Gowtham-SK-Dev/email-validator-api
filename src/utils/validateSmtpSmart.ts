@@ -1,5 +1,6 @@
 import { promises as dns } from "dns"
 import { testGoogleSigninWithRetry } from "./googleSigninTest"
+import { setupPuppeteerEnvironment, findChromeExecutable } from "./puppeteer-setup"
 
 interface ValidationResult {
   passed: boolean
@@ -128,6 +129,9 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   // 6. Google Sign-in existence check (ONLY for Gmail)
   let googleSigninResult: { status: string; message: string } | null = null
   if (domain.toLowerCase() === "gmail.com") {
+    // Ensure Puppeteer/Chrome is ready before running the test
+    await ensurePuppeteerReady()
+
     console.log(`🔐 Starting Google sign-in test for Gmail address: ${email}`)
 
     try {
@@ -203,6 +207,18 @@ async function performSmartValidation(email: string, domain: string, localPart: 
 
   console.log(`🏁 Final validation result for ${email}: ${passed ? "PASSED" : "FAILED"} - ${message}`)
   return finalResult
+}
+
+// Optionally, call this at the start of your app or before Gmail validation to ensure Chrome is available
+async function ensurePuppeteerReady() {
+  try {
+    const chromePath = findChromeExecutable()
+    if (!chromePath) {
+      await setupPuppeteerEnvironment()
+    }
+  } catch (err) {
+    console.error("❌ Could not set up Puppeteer/Chrome:", err)
+  }
 }
 
 // Helper functions (keeping your existing implementations)

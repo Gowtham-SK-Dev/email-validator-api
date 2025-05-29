@@ -27,8 +27,8 @@ export async function setupPuppeteerEnvironment(): Promise<void> {
       console.log("📦 Installing Chrome via Puppeteer...")
       execSync("npx puppeteer browsers install chrome", { stdio: "inherit" })
       console.log("✅ Chrome installed successfully via Puppeteer")
-    } catch (installError) {
-      console.warn("⚠️ Could not install Chrome via Puppeteer:", installError)
+    } catch (installError: any) {
+      console.warn("⚠️ Could not install Chrome via Puppeteer:", installError?.message || installError)
 
       // If in a serverless environment, try alternative installation methods
       if (isServerless) {
@@ -43,6 +43,11 @@ export async function setupPuppeteerEnvironment(): Promise<void> {
         // execSync("curl -L https://github.com/adieuadieu/serverless-chrome/releases/download/v1.0.0-55/stable-headless-chromium-amazonlinux-2.zip > /tmp/chrome.zip")
         // execSync("unzip /tmp/chrome.zip -d /tmp/")
         // execSync("chmod +x /tmp/chrome")
+      } else {
+        // If not serverless, provide a clear message for the user
+        console.error(
+          "❌ Chrome could not be installed automatically. Please install Chrome manually or run `npx puppeteer browsers install chrome`.",
+        )
       }
     }
 
