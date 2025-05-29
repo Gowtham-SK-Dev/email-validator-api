@@ -184,7 +184,7 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
 
     // If Puppeteer fails, fall back to alternative validation
     console.log("🔄 Puppeteer failed, using alternative validation")
-    return await alternativeGmailValidation(email)
+    // return await alternativeGmailValidation(email)
   }
 }
 
@@ -376,7 +376,7 @@ export async function testGoogleSigninWithRetry(
 
   if (skipPuppeteer) {
     console.log("🔄 Skipping Puppeteer due to environment configuration")
-    return await alternativeGmailValidation(email)
+    // return await alternativeGmailValidation(email)
   }
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -395,7 +395,7 @@ export async function testGoogleSigninWithRetry(
       // If technical error or unknown, try alternative validation
       if (result.status === "technical_error" || result.status === "unknown") {
         console.log(`🔐 Attempt ${attempt} had issues, trying alternative validation`)
-        return await alternativeGmailValidation(email)
+        // return await alternativeGmailValidation(email)
       }
 
       // If unknown and we have retries left, try again
@@ -417,7 +417,7 @@ export async function testGoogleSigninWithRetry(
 
       // Last attempt failed, use alternative validation
       console.log(`🔐 All attempts failed, using alternative validation`)
-      return await alternativeGmailValidation(email)
+    //   return await alternativeGmailValidation(email)
     }
   }
 
