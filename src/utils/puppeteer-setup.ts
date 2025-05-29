@@ -319,6 +319,7 @@ export class PuppeteerChromeManager {
       }
     }
 
+    console.log("⚠️ No Chrome executable found - using Puppeteer's bundled Chromium")
     const config: any = {
       headless: "new",
       args: [
@@ -340,12 +341,18 @@ export class PuppeteerChromeManager {
       defaultViewport: { width: 1280, height: 720 },
     }
 
-    // Add executable path if found
-    if (executablePath) {
+    // Force use of bundled Chromium if no executable path found
+    if (!executablePath) {
+      console.log("🔄 Forcing use of bundled Chromium")
+      // Explicitly unset any Chrome-related environment variables
+      delete process.env.PUPPETEER_EXECUTABLE_PATH
+      delete process.env.PUPPETEER_CACHE_DIR
+
+      // Don't set executablePath - let Puppeteer use its bundled version
+      console.log("✅ Configuration set for bundled Chromium")
+    } else {
       config.executablePath = executablePath
       console.log(`✅ Using Chrome at: ${executablePath}`)
-    } else {
-      console.log("⚠️ No Chrome executable found - using Puppeteer's bundled Chromium")
     }
 
     // Additional args for serverless environments

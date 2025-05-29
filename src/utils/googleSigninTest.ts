@@ -83,6 +83,11 @@ async function loadChromeConfig() {
 
   // Step 4: Fallback configuration (uses bundled Chromium)
   console.log("🔄 Using fallback configuration with bundled Chromium")
+
+  // Explicitly unset any problematic environment variables
+  delete process.env.PUPPETEER_EXECUTABLE_PATH
+  delete process.env.PUPPETEER_CACHE_DIR
+
   return {
     headless: "new" as const,
     args: [
@@ -106,6 +111,7 @@ async function loadChromeConfig() {
       "--disable-software-rasterizer",
     ],
     defaultViewport: { width: 1280, height: 720 },
+    // Explicitly don't set executablePath to force bundled Chromium
   }
 }
 
