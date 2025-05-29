@@ -1,19 +1,37 @@
-// Make sure to install puppeteer: npm install puppeteer
+// Netlify/Serverless Chrome support note:
+// Netlify does not support installing Chrome via `npx puppeteer browsers install chrome` at build/runtime.
+// You must use a serverless-compatible Chromium binary and set the executable path for Puppeteer.
+
 import puppeteer from "puppeteer"
 import { findChromeExecutable } from "./puppeteer-setup"
+
+const isNetlify = !!process.env.NETLIFY
 
 export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
   console.log(`🔐 Starting Google sign-in test for: ${email}`)
 
   let browser
   try {
-    // Try to find system Chrome if Puppeteer can't find its own
-    const chromePath = findChromeExecutable()
+    let chromePath = findChromeExecutable()
     const launchOptions: any = {
       headless: "new",
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     }
-    if (chromePath) {
+
+    // Netlify: Use a serverless Chromium binary if available
+    if (isNetlify) {
+      // Example: Use the chrome-aws-lambda package (add to package.json) and set executablePath
+      // const chromium = require('chrome-aws-lambda');
+      // chromePath = await chromium.executablePath;
+      // launchOptions.executablePath = chromePath;
+      // launchOptions.args = chromium.args;
+      // launchOptions.defaultViewport = chromium.defaultViewport;
+      // launchOptions.headless = chromium.headless;
+
+      // If you do not use chrome-aws-lambda, you must deploy a compatible binary and set the path here:
+      chromePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium-browser"
+      launchOptions.executablePath = chromePath
+    } else if (chromePath) {
       launchOptions.executablePath = chromePath
     }
 
