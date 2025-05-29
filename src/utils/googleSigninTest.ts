@@ -1,76 +1,25 @@
 import puppeteer from "puppeteer"
-import { execSync } from "child_process"
-import fs from "fs"
 
-// Helper function to install Chrome if needed
-async function ensureChromiumInstalled(): Promise<string | undefined> {
-  try {
-    console.log("🔍 Checking for Chrome installation...")
-
-    // Try to install Chrome using puppeteer's built-in installer
-    try {
-      console.log("📦 Installing Chrome via Puppeteer...")
-      execSync("npx puppeteer browsers install chrome", { stdio: "inherit" })
-      console.log("✅ Chrome installed successfully via Puppeteer")
-    } catch (installError) {
-      console.warn("⚠️ Could not install Chrome via Puppeteer:", installError)
-
-      // If that fails, try to find Chrome in common locations
-      const possiblePaths = [
-        // Linux paths
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/chromium",
-        // Mac paths
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        // Add more paths as needed
-      ]
-
-      for (const chromePath of possiblePaths) {
-        if (fs.existsSync(chromePath)) {
-          console.log(`✅ Found existing Chrome at: ${chromePath}`)
-          return chromePath
-        }
-      }
-
-      console.warn("⚠️ Could not find Chrome in common locations")
-    }
-
-    return undefined
-  } catch (error) {
-    console.error("❌ Error ensuring Chrome is installed:", error)
-    return undefined
-  }
-}
-
+// Alternative approach: Use chrome-aws-lambda for serverless environments
+// or implement a non-Puppeteer solution
 export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
   console.log(`🔐 Starting Google sign-in test for: ${email}`)
 
+  // Check if we're in a serverless environment
+  const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY
+
+  if (isServerless) {
+    console.log("🌩️ Detected serverless environment, using alternative validation")
+    return await alternativeGmailValidation(email)
+  }
+
   let browser
   try {
-    // Try to ensure Chrome is installed
-    const executablePath = await ensureChromiumInstalled()
+    // Try different Chrome installation approaches
+    const chromeConfig = await getChromeConfiguration()
 
-    // Launch options with fallbacks
-    const launchOptions: puppeteer.LaunchOptions = {
-      headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage", // Helps in limited memory environments
-        "--disable-blink-features=AutomationControlled",
-        "--disable-features=VizDisplayCompositor",
-        "--disable-web-security",
-      ],
-    }
-
-    // Add executable path if found
-    if (executablePath) {
-      launchOptions.executablePath = executablePath
-    }
-
-    console.log("🚀 Launching browser with options:", JSON.stringify(launchOptions, null, 2))
-    browser = await puppeteer.launch(launchOptions)
+    console.log("🚀 Launching browser with configuration:", chromeConfig)
+    browser = await puppeteer.launch(chromeConfig)
 
     const page = await browser.newPage()
 
@@ -158,7 +107,7 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
 
     // Wait for page response
     console.log(`🔐 Waiting for page response after clicking Next...`)
-    await page.waitForTimeout(4000) // Increased wait time
+    await page.waitForTimeout(4000)
 
     // Check for error messages first
     console.log(`🔐 Checking for error messages...`)
@@ -220,22 +169,6 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
       return { status: "error", message: "Email appears to be invalid - remained on identifier page" }
     }
 
-    // Check for other success indicators
-    const successSelectors = ['div[data-step="password"]', '[data-form-type="password"]', ".password-step"]
-
-    for (const selector of successSelectors) {
-      try {
-        const element = await page.$(selector)
-        if (element) {
-          console.log(`🔐 ✅ Found success indicator: ${selector}`)
-          await browser.close()
-          return { status: "success", message: "Email is valid - password step detected" }
-        }
-      } catch (e) {
-        continue
-      }
-    }
-
     // If we reach here, we couldn't determine the result
     console.log(`🔐 ❓ Could not determine result definitively`)
     await browser.close()
@@ -248,19 +181,203 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
     if (browser) {
       await browser.close().catch((e) => console.error("Error closing browser:", e))
     }
+
+    // If Puppeteer fails, fall back to alternative validation
+    console.log("🔄 Puppeteer failed, using alternative validation")
+    return await alternativeGmailValidation(email)
+  }
+}
+
+// Get Chrome configuration based on environment
+async function getChromeConfiguration(): Promise<puppeteer.LaunchOptions> {
+  const baseConfig: puppeteer.LaunchOptions = {
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-features=VizDisplayCompositor",
+      "--disable-web-security",
+      "--disable-gpu",
+      "--no-first-run",
+      "--no-zygote",
+      "--single-process",
+    ],
+  }
+
+  // Try to use chrome-aws-lambda if available
+  try {
+    const chromium = require("chrome-aws-lambda")
+    console.log("📦 Using chrome-aws-lambda")
+    return {
+      ...baseConfig,
+      executablePath: await chromium.executablePath,
+      args: [...(baseConfig.args || []), ...chromium.args],
+    }
+  } catch (e) {
+    console.log("📦 chrome-aws-lambda not available, trying other options")
+  }
+
+  // Try to find Chrome in system paths
+  const fs = require("fs")
+  const possiblePaths = [
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ]
+
+  for (const chromePath of possiblePaths) {
+    if (fs.existsSync(chromePath)) {
+      console.log(`✅ Found Chrome at: ${chromePath}`)
+      return {
+        ...baseConfig,
+        executablePath: chromePath,
+      }
+    }
+  }
+
+  // If no Chrome found, let Puppeteer try to use its bundled Chromium
+  console.log("🔍 No Chrome found, using Puppeteer's bundled Chromium")
+  return baseConfig
+}
+
+// Alternative Gmail validation without Puppeteer
+async function alternativeGmailValidation(email: string): Promise<{ status: string; message: string }> {
+  console.log(`🔄 Using alternative Gmail validation for: ${email}`)
+
+  if (!email.endsWith("@gmail.com")) {
+    return {
+      status: "unknown",
+      message: "Alternative validation only works for Gmail addresses",
+    }
+  }
+
+  try {
+    const localPart = email.split("@")[0]
+
+    // Enhanced Gmail validation rules
+    const validationResults = []
+
+    // 1. Length check (Gmail allows 6-30 characters)
+    if (localPart.length < 6 || localPart.length > 30) {
+      return {
+        status: "error",
+        message: "Gmail addresses must be between 6-30 characters before @gmail.com",
+      }
+    }
+    validationResults.push("✅ Length valid")
+
+    // 2. Must start with a letter or number
+    if (!/^[a-z0-9]/i.test(localPart)) {
+      return {
+        status: "error",
+        message: "Gmail addresses must start with a letter or number",
+      }
+    }
+    validationResults.push("✅ Start character valid")
+
+    // 3. Valid characters only
+    if (!/^[a-z0-9._]+$/i.test(localPart)) {
+      return {
+        status: "error",
+        message: "Gmail addresses can only contain letters, numbers, dots, and underscores",
+      }
+    }
+    validationResults.push("✅ Characters valid")
+
+    // 4. No consecutive dots
+    if (localPart.includes("..")) {
+      return {
+        status: "error",
+        message: "Gmail addresses cannot contain consecutive dots",
+      }
+    }
+    validationResults.push("✅ No consecutive dots")
+
+    // 5. Cannot start or end with dots
+    if (localPart.startsWith(".") || localPart.endsWith(".")) {
+      return {
+        status: "error",
+        message: "Gmail addresses cannot start or end with dots",
+      }
+    }
+    validationResults.push("✅ Dot placement valid")
+
+    // 6. Check for common invalid patterns
+    const invalidPatterns = [
+      { pattern: /^test/i, reason: "starts with 'test'" },
+      { pattern: /^fake/i, reason: "starts with 'fake'" },
+      { pattern: /^spam/i, reason: "starts with 'spam'" },
+      { pattern: /^noreply/i, reason: "starts with 'noreply'" },
+      { pattern: /^admin$/i, reason: "is 'admin'" },
+      { pattern: /^root$/i, reason: "is 'root'" },
+      { pattern: /^[0-9]+$/, reason: "is only numbers" },
+    ]
+
+    for (const { pattern, reason } of invalidPatterns) {
+      if (pattern.test(localPart)) {
+        return {
+          status: "error",
+          message: `Gmail address appears invalid - ${reason}`,
+        }
+      }
+    }
+    validationResults.push("✅ No invalid patterns")
+
+    // 7. Check for realistic name patterns
+    const hasRealisticPattern =
+      /^[a-z]+\.[a-z]+$/i.test(localPart) || // firstname.lastname
+      /^[a-z]+[0-9]{1,4}$/i.test(localPart) || // name with numbers
+      /^[a-z]{3,}$/i.test(localPart) // simple name
+
+    if (hasRealisticPattern) {
+      validationResults.push("✅ Realistic pattern")
+    }
+
+    // 8. Try a simple HTTP check to Gmail (this won't verify existence but checks if Gmail is reachable)
+    try {
+      const response = await fetch("https://accounts.google.com/signin", {
+        method: "HEAD",
+        signal: AbortSignal.timeout(5000),
+      })
+      if (response.ok) {
+        validationResults.push("✅ Gmail service reachable")
+      }
+    } catch (e) {
+      validationResults.push("⚠️ Gmail service check failed")
+    }
+
+    // If all checks pass, we can't definitively say it exists, but it's syntactically valid
+    return {
+      status: "unknown",
+      message: `Gmail format validation passed (${validationResults.length} checks). Existence couldn't be verified due to technical limitations. Checks: ${validationResults.join(", ")}`,
+    }
+  } catch (error) {
     return {
       status: "technical_error",
-      message: `Automation error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      message: `Alternative validation error: ${error instanceof Error ? error.message : "Unknown error"}`,
     }
   }
 }
 
-// Enhanced version with retry logic and fallback to API-based validation
+// Enhanced version with retry logic and immediate fallback
 export async function testGoogleSigninWithRetry(
   email: string,
-  maxRetries = 2,
+  maxRetries = 1, // Reduced retries since we have good fallback
 ): Promise<{ status: string; message: string }> {
   console.log(`🔐 Starting Google sign-in test for: ${email} (max retries: ${maxRetries})`)
+
+  // Check if we should skip Puppeteer entirely
+  const skipPuppeteer = process.env.SKIP_PUPPETEER === "true" || process.env.VERCEL === "1"
+
+  if (skipPuppeteer) {
+    console.log("🔄 Skipping Puppeteer due to environment configuration")
+    return await alternativeGmailValidation(email)
+  }
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     console.log(`🔐 Attempt ${attempt}/${maxRetries} for email: ${email}`)
@@ -275,15 +392,19 @@ export async function testGoogleSigninWithRetry(
         return result
       }
 
+      // If technical error or unknown, try alternative validation
+      if (result.status === "technical_error" || result.status === "unknown") {
+        console.log(`🔐 Attempt ${attempt} had issues, trying alternative validation`)
+        return await alternativeGmailValidation(email)
+      }
+
       // If unknown and we have retries left, try again
-      if (result.status === "unknown" && attempt < maxRetries) {
+      if (attempt < maxRetries) {
         console.log(`🔐 Attempt ${attempt} returned unknown, retrying in 2 seconds...`)
         await new Promise((resolve) => setTimeout(resolve, 2000))
         continue
       }
 
-      // Last attempt or non-retryable result
-      console.log(`🔐 Final attempt ${attempt} result: ${result.status}`)
       return result
     } catch (error) {
       console.error(`🔐 Attempt ${attempt} failed with error:`, error)
@@ -294,72 +415,11 @@ export async function testGoogleSigninWithRetry(
         continue
       }
 
-      // Last attempt failed, try fallback validation
-      return await fallbackEmailValidation(email)
+      // Last attempt failed, use alternative validation
+      console.log(`🔐 All attempts failed, using alternative validation`)
+      return await alternativeGmailValidation(email)
     }
   }
 
   return { status: "technical_error", message: "Max retries exceeded" }
-}
-
-// Fallback validation when Puppeteer fails
-async function fallbackEmailValidation(email: string): Promise<{ status: string; message: string }> {
-  console.log(`🔄 Using fallback validation for: ${email}`)
-
-  if (!email.endsWith("@gmail.com")) {
-    return {
-      status: "unknown",
-      message: "Fallback validation only works for Gmail addresses",
-    }
-  }
-
-  try {
-    // Simple check - valid Gmail addresses must:
-    // - Be between 6-30 characters before the @ symbol
-    // - Start with a letter
-    // - Contain only letters, numbers, dots, and underscores
-    // - Not have consecutive dots
-
-    const localPart = email.split("@")[0]
-
-    if (localPart.length < 6 || localPart.length > 30) {
-      return {
-        status: "error",
-        message: "Gmail addresses must be between 6-30 characters before @gmail.com",
-      }
-    }
-
-    if (!/^[a-z]/.test(localPart)) {
-      return {
-        status: "error",
-        message: "Gmail addresses must start with a letter",
-      }
-    }
-
-    if (!/^[a-z0-9._]+$/.test(localPart)) {
-      return {
-        status: "error",
-        message: "Gmail addresses can only contain letters, numbers, dots, and underscores",
-      }
-    }
-
-    if (localPart.includes("..")) {
-      return {
-        status: "error",
-        message: "Gmail addresses cannot contain consecutive dots",
-      }
-    }
-
-    // If it passes all these checks, we can't definitively say it exists,
-    // but it's at least syntactically valid
-    return {
-      status: "unknown",
-      message: "Email format is valid for Gmail, but existence couldn't be verified due to technical limitations",
-    }
-  } catch (error) {
-    return {
-      status: "technical_error",
-      message: `Fallback validation error: ${error instanceof Error ? error.message : "Unknown error"}`,
-    }
-  }
 }
