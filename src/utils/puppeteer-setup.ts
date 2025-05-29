@@ -24,7 +24,8 @@ export class PuppeteerChromeManager {
       process.env.NETLIFY ||
       process.env.RAILWAY_ENVIRONMENT ||
       process.env.RENDER ||
-      process.env.HEROKU_APP_NAME
+      process.env.HEROKU_APP_NAME ||
+      process.env.FUNCTIONS_WORKER
     )
   }
 
@@ -317,5 +318,91 @@ export class PuppeteerChromeManager {
       console.error("❌ Chrome test failed:", (error as Error).message)
       return false
     }
+  }
+
+  /**
+   * Save Chrome configuration to file
+   */
+  async saveConfig(config: any): Promise<void> {
+    const configPath = path.join(process.cwd(), "puppeteer-config.json")
+    try {
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
+      console.log(`💾 Configuration saved to: ${configPath}`)
+    } catch (error) {
+      console.warn("⚠️ Could not save configuration:", (error as Error).message)
+    }
+  }
+}
+
+/**
+ * Main setup function for Puppeteer environment
+ */
+export async function setupPuppeteerEnvironment(): Promise<any> {
+  console.log("🚀 Setting up Puppeteer environment...")
+  console.log("=".repeat(50))
+
+  const chromeManager = new PuppeteerChromeManager()
+
+  try {
+    // Get Chrome configuration
+    const config = await chromeManager.getChromeConfig()
+    console.log("\n📋 Chrome Configuration:")
+    console.log(JSON.stringify(config, null, 2))
+
+    // Test the setup
+    const testResult = await chromeManager.testChrome()
+
+    if (testResult) {
+      // Save configuration
+      await chromeManager.saveConfig(config)
+
+      console.log("\n🎉 Setup completed successfully!")
+      console.log("=".repeat(50))
+      console.log("✅ Chrome is ready for Puppeteer")
+      console.log("✅ Configuration saved")
+      console.log("✅ Test passed")
+      console.log("\n💡 Your email validation is now ready to use!")
+
+      return config
+    } else {
+      throw new Error("Chrome test failed")
+    }
+  } catch (error) {
+    console.error("\n❌ Setup failed:", (error as Error).message)
+    console.log("\n🔧 Troubleshooting:")
+    console.log("1. Try: npx puppeteer browsers install chrome")
+    console.log("2. Install Chrome manually for your platform")
+    console.log("3. Check permissions and PATH environment")
+    console.log("4. For serverless, bundled Chromium should work")
+
+    // Return a basic config that might still work
+    const fallbackConfig = {
+      headless: "new",
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-web-security",
+        "--disable-features=VizDisplayCompositor",
+        "--no-first-run",
+        "--disable-extensions",
+        "--disable-plugins",
+        "--disable-images",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--window-size=1280,720",
+        "--single-process",
+        "--no-zygote",
+        "--disable-gpu",
+        "--disable-software-rasterizer",
+      ],
+      defaultViewport: { width: 1280, height: 720 },
+    }
+
+    // Save fallback config
+    await chromeManager.saveConfig(fallbackConfig)
+    return fallbackConfig
   }
 }

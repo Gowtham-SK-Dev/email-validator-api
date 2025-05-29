@@ -1,9 +1,10 @@
 import puppeteer from "puppeteer"
 import fs from "fs"
 import path from "path"
+import { PuppeteerChromeManager } from "./puppeteer-setup"
 
 // Load Chrome configuration
-function loadChromeConfig() {
+async function loadChromeConfig() {
   const configPath = path.join(process.cwd(), "puppeteer-config.json")
 
   if (fs.existsSync(configPath)) {
@@ -12,31 +13,14 @@ function loadChromeConfig() {
       console.log("✅ Using saved Chrome configuration")
       return config
     } catch (error) {
-      console.warn("⚠️ Could not load saved config, using defaults")
+      console.warn("⚠️ Could not load saved config, using Chrome manager")
     }
   }
 
-  // Default configuration (fallback)
-  return {
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-blink-features=AutomationControlled",
-      "--disable-web-security",
-      "--disable-features=VizDisplayCompositor",
-      "--no-first-run",
-      "--disable-extensions",
-      "--disable-plugins",
-      "--disable-images",
-      "--disable-background-timer-throttling",
-      "--disable-backgrounding-occluded-windows",
-      "--disable-renderer-backgrounding",
-      "--window-size=1280,720",
-    ],
-    defaultViewport: { width: 1280, height: 720 },
-  }
+  // Use Chrome manager as fallback
+  console.log("🔧 No saved config found, using Chrome manager...")
+  const chromeManager = new PuppeteerChromeManager()
+  return await chromeManager.getChromeConfig()
 }
 
 export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
@@ -45,7 +29,7 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
   let browser
   try {
     // Use the saved Chrome configuration
-    const chromeConfig = loadChromeConfig()
+    const chromeConfig = await loadChromeConfig()
     console.log(`🔧 Using Chrome: ${chromeConfig.executablePath ? "Custom installation" : "Bundled Chromium"}`)
 
     // Launch browser with the proper configuration

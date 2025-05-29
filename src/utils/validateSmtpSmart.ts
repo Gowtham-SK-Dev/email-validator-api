@@ -1,5 +1,5 @@
 import { promises as dns } from "dns"
-import { testGoogleSigninWithRetryFixed } from "./fixed-google-signin-test"
+import { testGoogleSigninWithRetry } from "./googleSigninTest"
 
 interface ValidationResult {
   passed: boolean
@@ -26,7 +26,7 @@ interface AnalysisResult {
 // In-memory cache for domain validation results
 const validationCache: SmartValidationCache = {}
 
-export async function validateSmtpSmartFixed(email: string): Promise<ValidationResult> {
+export async function validateSmtpSmart(email: string): Promise<ValidationResult> {
   const domain = email.split("@")[1]
   const localPart = email.split("@")[0]
 
@@ -132,7 +132,7 @@ async function performSmartValidation(email: string, domain: string, localPart: 
 
     try {
       // Use the improved retry function with Chrome fix
-      googleSigninResult = await testGoogleSigninWithRetryFixed(email, 2)
+      googleSigninResult = await testGoogleSigninWithRetry(email, 2)
       console.log(`🔐 Google sign-in result:`, googleSigninResult)
 
       // Validate the result structure
