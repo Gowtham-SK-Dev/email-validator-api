@@ -1,304 +1,257 @@
 import puppeteer from "puppeteer"
 
-/**
- * ROBUST VERSION - With detailed error handling and anti-bot measures
- */
 export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
-  console.log(`🔐 Testing email: ${email}`)
+  console.log(`🔐 Starting Google sign-in test for: ${email}`)
 
-  let browser: puppeteer.Browser | null = null
-  let page: puppeteer.Page | null = null
-
+  let browser
   try {
-    // Force clear any Chrome-related environment variables
-    delete process.env.PUPPETEER_EXECUTABLE_PATH
-    delete process.env.PUPPETEER_CACHE_DIR
-    delete process.env.CHROME_BIN
-    delete process.env.CHROMIUM_PATH
-
-    console.log("🚀 Launching browser...")
-
-    // Launch with minimal configuration
+    // Launch browser with optimized configuration
     browser = await puppeteer.launch({
       headless: "new",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
         "--disable-web-security",
-        "--disable-features=IsolateOrigins,site-per-process",
-        "--disable-site-isolation-trials",
+        "--disable-features=VizDisplayCompositor",
+        "--no-first-run",
+        "--disable-extensions",
+        "--disable-plugins",
+        "--disable-images",
+        "--disable-javascript-harmony-shipping",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--window-size=1280,720",
       ],
-      ignoreHTTPSErrors: true,
+      defaultViewport: { width: 1280, height: 720 },
     })
 
-    console.log("✅ Browser launched successfully!")
+    const page = await browser.newPage()
 
-    // Create a new page with increased timeouts
-    page = await browser.newPage()
-
-    // Set a realistic user agent
+    // Set realistic user agent and headers
     await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     )
 
-    // Set extra HTTP headers to appear more like a real browser
     await page.setExtraHTTPHeaders({
       "Accept-Language": "en-US,en;q=0.9",
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     })
 
-    // Disable webdriver to avoid detection
+    // Remove webdriver property
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, "webdriver", {
         get: () => undefined,
       })
     })
 
-    console.log("🌐 Navigating to Google sign-in page...")
+    console.log(`🔐 Navigating to Google sign-in page...`)
 
-    // Navigate with longer timeout and wait for network to be idle
-    await page.goto("https://accounts.google.com/signin/v2/identifier", {
-      waitUntil: "networkidle2",
-      timeout: 60000, // 60 seconds
-    })
+    // Navigate to Google sign-in page
+    await page.goto(
+      "https://accounts.google.com/v3/signin/identifier?authuser=0&continue=https%3A%2F%2Fmyaccount.google.com%2F&ec=GAlAwAE&hl=en&service=accountsettings&flowName=GlifWebSignIn&flowEntry=AddSession",
+      { waitUntil: "networkidle0", timeout: 30000 },
+    )
 
-    console.log("📄 Page loaded, waiting for stability...")
-    await page.waitForTimeout(3000) // Wait for any animations/scripts to complete
+    // Wait for page to stabilize
+    await page.waitForTimeout(3000)
 
-    // Take screenshot for debugging (optional)
-    // await page.screenshot({ path: 'google-signin.png' });
+    // Find email input field
+    console.log(`🔐 Looking for email input field...`)
 
-    console.log("🔍 Looking for email input field...")
-
-    // Try multiple selector strategies
-    let emailInput = null
-    const emailSelectors = ['input[type="email"]', "#identifierId", 'input[name="identifier"]', "input.whsOnd"]
-
-    for (const selector of emailSelectors) {
-      try {
-        emailInput = await page.waitForSelector(selector, {
-          visible: true,
-          timeout: 5000,
-        })
-        if (emailInput) {
-          console.log(`✅ Found email input with selector: ${selector}`)
-          break
-        }
-      } catch (e) {
-        console.log(`⚠️ Selector not found: ${selector}`)
-      }
+    let emailInput
+    try {
+      // Wait for the email input to be visible and interactable
+      emailInput = await page.waitForSelector("#identifierId", {
+        visible: true,
+        timeout: 10000,
+      })
+    } catch (error) {
+      console.log("❌ Could not find email input field")
+      await browser.close()
+      return { status: "technical_error", message: "Could not find email input field on Google sign-in page" }
     }
 
-    if (!emailInput) {
-      throw new Error("Could not find email input field")
+    // Clear and enter email
+    console.log(`🔐 Entering email: ${email}`)
+    await emailInput.click({ clickCount: 3 }) // Select all existing text
+    await emailInput.type(email, { delay: 50 })
+
+    // Wait a moment for the input to register
+    await page.waitForTimeout(1000)
+
+    // Find and click Next button
+    console.log(`🔐 Looking for Next button...`)
+
+    let nextButton
+    try {
+      // Wait for Next button to be clickable
+      nextButton = await page.waitForSelector("#identifierNext", {
+        visible: true,
+        timeout: 5000,
+      })
+    } catch (error) {
+      console.log("❌ Could not find Next button")
+      await browser.close()
+      return { status: "technical_error", message: "Could not find Next button" }
     }
 
-    console.log("📝 Entering email...")
-
-    // Clear field and type with human-like delays
-    await emailInput.click({ clickCount: 3 }) // Select all text
-    await emailInput.type(email, { delay: 100 }) // Type with delay
-
-    console.log("👆 Looking for Next button...")
-
-    // Try multiple next button selectors
-    let nextButton = null
-    const nextButtonSelectors = [
-      "#identifierNext",
-      'button[jsname="LgbsSe"]',
-      'div[jsname="Njthtb"]',
-      'button[type="submit"]',
-      "div.VfPpkd-RLmnJb",
-    ]
-
-    for (const selector of nextButtonSelectors) {
-      try {
-        nextButton = await page.waitForSelector(selector, {
-          visible: true,
-          timeout: 5000,
-        })
-        if (nextButton) {
-          console.log(`✅ Found next button with selector: ${selector}`)
-          break
-        }
-      } catch (e) {
-        console.log(`⚠️ Next button selector not found: ${selector}`)
-      }
-    }
-
-    if (!nextButton) {
-      throw new Error("Could not find Next button")
-    }
-
-    console.log("👆 Clicking Next button...")
+    console.log(`🔐 Clicking Next button...`)
     await nextButton.click()
 
-    // Wait for navigation to complete
-    console.log("⏳ Waiting for response...")
+    // Wait for page response
+    console.log(`🔐 Waiting for page response...`)
     await page.waitForTimeout(5000)
 
-    // Get current URL for analysis
+    // Check current URL first
     const currentUrl = page.url()
-    console.log(`📍 Current URL: ${currentUrl}`)
+    console.log(`🔐 Current URL: ${currentUrl}`)
 
-    // Check for success indicators in URL
+    // Check if we're on password page (success)
     if (
-      currentUrl.includes("challenge/pwd") ||
-      currentUrl.includes("challenge/password") ||
-      currentUrl.includes("signin/v2/challenge") ||
-      currentUrl.includes("signin/challenge") ||
-      currentUrl.includes("signin/v2/sl/pwd")
+      currentUrl.includes("signin/v2/challenge/pwd") ||
+      currentUrl.includes("signin/v2/sl/pwd") ||
+      currentUrl.includes("challenge/password")
     ) {
-      console.log("✅ Success: Email exists!")
+      console.log(`🔐 ✅ Reached password page - email exists!`)
+      await browser.close()
       return { status: "success", message: "Email exists - reached password step" }
     }
 
-    // Check for account selection page
-    if (currentUrl.includes("accountchooser") || currentUrl.includes("ListAccounts")) {
-      console.log("✅ Success: Email exists (account selection page)")
-      return { status: "success", message: "Email exists - reached account selection" }
-    }
+    // Check if still on identifier page (likely invalid email)
+    if (currentUrl.includes("signin/identifier") || currentUrl.includes("signin/v2/identifier")) {
+      // Look for error messages
+      console.log(`🔐 Still on identifier page, checking for errors...`)
 
-    // Check for error messages if still on identifier page
-    if (currentUrl.includes("identifier")) {
-      console.log("⚠️ Still on identifier page, checking for errors...")
+      try {
+        // Wait a bit more for error messages to appear
+        await page.waitForTimeout(2000)
 
-      // Wait for error messages to appear
-      await page.waitForTimeout(2000)
+        // Check for error elements
+        const errorSelectors = ['div[jsname="B34EJ"]', ".o6cuMc", ".Ekjuhf", ".dEOOab", '[role="alert"]']
 
-      // Check for error elements
-      const errorSelectors = [
-        'div[aria-live="polite"]',
-        'div[jsname="B34EJ"]',
-        ".o6cuMc",
-        ".Ekjuhf",
-        '[role="alert"]',
-        ".LXRPh",
-      ]
-
-      for (const selector of errorSelectors) {
-        try {
+        for (const selector of errorSelectors) {
           const errorElement = await page.$(selector)
           if (errorElement) {
             const errorText = await page.evaluate((el) => el.textContent?.trim(), errorElement)
             if (errorText && errorText.length > 0) {
-              console.log(`❌ Found error: ${errorText}`)
+              console.log(`🔐 ❌ Found error: ${errorText}`)
+              await browser.close()
               return { status: "error", message: errorText }
             }
           }
-        } catch (e) {
-          // Continue checking other selectors
         }
+
+        // If no specific error found but still on identifier page
+        console.log(`🔐 ❌ No error message found but still on identifier page`)
+        await browser.close()
+        return { status: "error", message: "Email appears to be invalid - remained on identifier page" }
+      } catch (error) {
+        console.log(`🔐 ❌ Error while checking for error messages: ${error}`)
+        await browser.close()
+        return { status: "error", message: "Email appears to be invalid" }
+      }
+    }
+
+    // Check for other challenge pages (2FA, phone verification, etc.)
+    if (currentUrl.includes("challenge/") || currentUrl.includes("signin/v2/challenge/")) {
+      console.log(`🔐 ✅ Reached challenge page - email exists but has additional security`)
+      await browser.close()
+      return { status: "success", message: "Email exists - reached security challenge" }
+    }
+
+    // Check for account selection page
+    if (currentUrl.includes("accountchooser") || currentUrl.includes("ListAccounts")) {
+      console.log(`🔐 ✅ Reached account selection - email exists`)
+      await browser.close()
+      return { status: "success", message: "Email exists - reached account selection" }
+    }
+
+    // If we reach here, check page content for clues
+    console.log(`🔐 Checking page content for validation clues...`)
+
+    try {
+      // Check if password input exists (another way to detect success)
+      const passwordInput = await page.$('input[type="password"]')
+      if (passwordInput) {
+        console.log(`🔐 ✅ Found password input - email exists!`)
+        await browser.close()
+        return { status: "success", message: "Email exists - password input found" }
       }
 
-      // Check page content for error indicators
+      // Check page text for error indicators
       const pageText = await page.evaluate(() => document.body.innerText.toLowerCase())
+
       if (
         pageText.includes("couldn't find") ||
         pageText.includes("doesn't exist") ||
         pageText.includes("invalid") ||
         pageText.includes("enter a valid email")
       ) {
-        console.log("❌ Found error indicators in page text")
-        return { status: "error", message: "Email appears to be invalid" }
+        console.log(`🔐 ❌ Found error in page text`)
+        await browser.close()
+        return { status: "error", message: "Email appears to be invalid based on page content" }
       }
-
-      console.log("❌ No specific error found but remained on identifier page")
-      return { status: "error", message: "Email appears to be invalid - remained on identifier page" }
+    } catch (error) {
+      console.log(`🔐 Error checking page content: ${error}`)
     }
 
-    // Check for password input as alternative success indicator
-    try {
-      const passwordInput = await page.$('input[type="password"]')
-      if (passwordInput) {
-        console.log("✅ Success: Found password input!")
-        return { status: "success", message: "Email exists - password input found" }
-      }
-    } catch (e) {
-      // No password input found
-    }
-
-    // If we reach here, result is unclear
-    console.log("❓ Could not determine result definitively")
+    // If we can't determine the result, it's likely a technical issue
+    console.log(`🔐 ❓ Could not determine result definitively`)
+    await browser.close()
     return {
       status: "technical_error",
-      message: `Could not determine email validity. Current URL: ${currentUrl}`,
+      message: `Could not determine email validity. URL: ${currentUrl}`,
     }
   } catch (error) {
-    console.error("💥 Error:", error)
-
-    // Provide detailed error message
-    const errorMessage = error instanceof Error ? error.message : "Unknown error"
-
-    // Handle specific error types
-    if (errorMessage.includes("Navigation timeout")) {
-      return {
-        status: "technical_error",
-        message: "Page load timeout - Google may be blocking automated access",
-      }
+    console.error(`🔐 💥 Google sign-in test error:`, error)
+    if (browser) {
+      await browser.close().catch((e) => console.error("Error closing browser:", e))
     }
-
-    if (errorMessage.includes("net::ERR_")) {
-      return {
-        status: "technical_error",
-        message: "Network error - check internet connection",
-      }
-    }
-
     return {
       status: "technical_error",
-      message: `Error: ${errorMessage}`,
-    }
-  } finally {
-    // Always cleanup resources
-    try {
-      if (page) await page.close().catch(() => {})
-      if (browser) await browser.close().catch(() => {})
-    } catch (e) {
-      console.warn("⚠️ Cleanup error:", e)
+      message: `Puppeteer error: ${error instanceof Error ? error.message : "Unknown error"}`,
     }
   }
 }
 
-/**
- * Enhanced retry logic with better error handling
- */
+// Enhanced version with retry logic
 export async function testGoogleSigninWithRetry(
   email: string,
-  maxRetries = 3,
+  maxRetries = 2,
 ): Promise<{ status: string; message: string }> {
-  console.log(`🔄 Starting email check with ${maxRetries} retries: ${email}`)
+  console.log(`🔐 Starting Google sign-in test with retry for: ${email} (max retries: ${maxRetries})`)
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    console.log(`🔄 Attempt ${attempt}/${maxRetries}`)
+    console.log(`🔐 Attempt ${attempt}/${maxRetries} for email: ${email}`)
 
     try {
       const result = await testGoogleSignin(email)
+      console.log(`🔐 Attempt ${attempt} result:`, result)
 
-      // If we got a definitive result, return it
+      // If we get a definitive result (success or error), return it
       if (result.status === "success" || result.status === "error") {
+        console.log(`🔐 Definitive result on attempt ${attempt}: ${result.status}`)
         return result
       }
 
       // If technical error and we have retries left, try again
       if (result.status === "technical_error" && attempt < maxRetries) {
-        // Exponential backoff
-        const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000)
-        console.log(`⏳ Technical error, waiting ${delay}ms before retry...`)
-        await new Promise((resolve) => setTimeout(resolve, delay))
+        console.log(`🔐 Technical error on attempt ${attempt}, retrying in 3 seconds...`)
+        await new Promise((resolve) => setTimeout(resolve, 3000))
         continue
       }
 
       // Return the result if it's the last attempt
       return result
     } catch (error) {
-      console.error(`💥 Attempt ${attempt} failed with error:`, error)
+      console.error(`🔐 Attempt ${attempt} failed with error:`, error)
 
       if (attempt < maxRetries) {
-        const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000)
-        console.log(`⏳ Error caught, waiting ${delay}ms before retry...`)
-        await new Promise((resolve) => setTimeout(resolve, delay))
+        console.log(`🔐 Retrying after error in 3 seconds...`)
+        await new Promise((resolve) => setTimeout(resolve, 3000))
         continue
       }
 
@@ -309,8 +262,47 @@ export async function testGoogleSigninWithRetry(
     }
   }
 
+  return { status: "technical_error", message: "Max retries exceeded" }
+}
+
+// Alternative Gmail validation (simplified - only for format checking)
+async function alternativeGmailValidation(email: string): Promise<{ status: string; message: string }> {
+  console.log(`🔄 Using alternative Gmail validation for: ${email}`)
+
+  if (!email.endsWith("@gmail.com")) {
+    return {
+      status: "error",
+      message: "Not a Gmail address",
+    }
+  }
+
+  const localPart = email.split("@")[0]
+
+  // Basic Gmail format validation
+  if (localPart.length < 6 || localPart.length > 30) {
+    return {
+      status: "error",
+      message: "Gmail addresses must be between 6-30 characters",
+    }
+  }
+
+  if (!/^[a-z0-9._]+$/i.test(localPart)) {
+    return {
+      status: "error",
+      message: "Gmail addresses can only contain letters, numbers, dots, and underscores",
+    }
+  }
+
+  if (localPart.includes("..") || localPart.startsWith(".") || localPart.endsWith(".")) {
+    return {
+      status: "error",
+      message: "Invalid dot placement in Gmail address",
+    }
+  }
+
+  // If format is valid but we can't verify existence
   return {
-    status: "technical_error",
-    message: "Max retries exceeded without definitive result",
+    status: "unknown",
+    message: "Gmail format is valid but existence could not be verified",
   }
 }

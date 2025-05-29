@@ -6,9 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "setup-puppeteer": "npx ts-node setup-puppeteer-environment.ts",
-    "test-chrome": "npx ts-node setup-puppeteer-environment.ts"
+    "lint": "next lint"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -70,8 +68,7 @@
     "zod": "^3.24.1",
     "puppeteer": "^21.0.0",
     "chrome-aws-lambda": "^10.1.0",
-    "puppeteer-core": "^21.0.0",
-    "ts-node": "^10.9.1"
+    "puppeteer-core": "^21.0.0"
   },
   "devDependencies": {
     "@types/node": "^22",

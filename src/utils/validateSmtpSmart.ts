@@ -125,13 +125,13 @@ async function performSmartValidation(email: string, domain: string, localPart: 
 
   console.log(`📋 Initial validation result: ${passed ? "PASSED" : "FAILED"} - ${message}`)
 
-  // 6. Google Sign-in existence check (ONLY for Gmail) - Using the fixed version
+  // 6. Google Sign-in existence check (ONLY for Gmail)
   let googleSigninResult: { status: string; message: string } | null = null
   if (domain.toLowerCase() === "gmail.com") {
     console.log(`🔐 Starting Google sign-in test for Gmail address: ${email}`)
 
     try {
-      // Use the improved retry function with Chrome fix
+      // Use the improved retry function
       googleSigninResult = await testGoogleSigninWithRetry(email, 2)
       console.log(`🔐 Google sign-in result:`, googleSigninResult)
 
@@ -205,7 +205,7 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   return finalResult
 }
 
-// Keep all your existing helper functions unchanged
+// Helper functions (keeping your existing implementations)
 function analyzeLocalPart(localPart: string): AnalysisResult {
   const analysis: AnalysisResult = {
     length: localPart.length,
