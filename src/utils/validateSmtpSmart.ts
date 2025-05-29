@@ -129,15 +129,28 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   // 6. Google Sign-in existence check (ONLY for Gmail)
   let googleSigninResult: { status: string; message: string } | null = null
   if (domain.toLowerCase() === "gmail.com") {
-    // Ensure Puppeteer/Chrome is ready before running the test
     await ensurePuppeteerReady()
 
     console.log(`🔐 Starting Google sign-in test for Gmail address: ${email}`)
 
     try {
-      // Use the improved retry function
       googleSigninResult = await testGoogleSigninWithRetry(email, 2)
-      console.log(`🔐 Google sign-in result:`, googleSigninResult)
+      // If Chrome is not found, override to technical error and provide clear instructions
+      if (googleSigninResult && googleSigninResult.status === "chrome_not_found") {
+        return {
+          passed: false,
+          message: "Google sign-in check failed: Chrome browser not found for Puppeteer. Please install Chrome or run `npx puppeteer browsers install chrome`.",
+          confidence,
+          details: {
+            domainAnalysis,
+            localPartAnalysis,
+            mxAnalysis,
+            patternAnalysis,
+            reputationAnalysis,
+            googleSigninResult,
+          },
+        }
+      }
 
       // Validate the result structure
       if (!googleSigninResult || typeof googleSigninResult.status !== "string") {
