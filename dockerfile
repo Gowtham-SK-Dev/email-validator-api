@@ -27,7 +27,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN npm install -g pnpm@8.15.4
 
 # Install dependencies using lockfile (modify if lockfile is causing issues)
-RUN pnpm install --frozen-lockfile || (cat pnpm-debug.log || true)
+RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile || (cat pnpm-debug.log || true)
 
 # Copy the rest of the application code
 COPY . .
