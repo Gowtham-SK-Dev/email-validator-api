@@ -25,9 +25,12 @@ WORKDIR /app
 # Copy dependency files
 COPY package.json pnpm-lock.yaml ./
 
-# Fix: Ensure pnpm-lock.yaml exists before install, and add troubleshooting for pnpm install errors
-RUN if [ ! -f pnpm-lock.yaml ]; then echo '{}' > pnpm-lock.yaml; fi \
-    && npm install -g pnpm \
+# Debug: Show pnpm and node versions, and print lockfile before install
+RUN npm install -g pnpm \
+    && node -v \
+    && pnpm -v \
+    && echo "==== pnpm-lock.yaml ====" \
+    && cat pnpm-lock.yaml \
     && pnpm install --frozen-lockfile || (cat pnpm-debug.log || true)
 
 # Copy the rest of the code
