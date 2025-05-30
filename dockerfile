@@ -24,10 +24,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 
 # Install specific version of PNPM (match your local version if possible)
-RUN npm install -g pnpm@8.15.4
-
-# Install dependencies using lockfile (modify if lockfile is causing issues)
-RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile || (cat pnpm-debug.log || true)
+RUN npm install -g pnpm@8.15.4 \
+    && pnpm install --no-lockfile
 
 # Copy the rest of the application code
 COPY . .
