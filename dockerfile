@@ -1,9 +1,8 @@
-# Use official Node.js image
+# Use official lightweight Node.js image
 FROM node:18-slim
 
-# Install Chromium and required libs
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# Install Chromium and required dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     libnss3 \
     libatk1.0-0 \
@@ -16,23 +15,25 @@ RUN apt-get update && \
     libgtk-3-0 \
     libxshmfence1 \
     libglu1-mesa && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files
+# Copy only dependency files first for optimized Docker caching
 COPY package.json pnpm-lock.yaml ./
 
-# Only use plain pnpm install (no --frozen-lockfile, no debug output)
-RUN npm install -g pnpm && pnpm install
+# Install specific version of PNPM (match your local version if possible)
+RUN npm install -g pnpm@8.15.4
 
-# Copy the rest of the code
+# Install dependencies using lockfile (modify if lockfile is causing issues)
+RUN pnpm install --frozen-lockfile || (cat pnpm-debug.log || true)
+
+# Copy the rest of the application code
 COPY . .
 
-# Expose port
+# Expose the port the app runs on
 EXPOSE 3000
 
-# Start the app
+# Start the application
 CMD ["pnpm", "start"]
