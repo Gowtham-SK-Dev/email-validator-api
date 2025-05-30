@@ -31,7 +31,7 @@ RUN npm install -g pnpm \
     && pnpm -v \
     && echo "==== pnpm-lock.yaml ====" \
     && cat pnpm-lock.yaml \
-    && pnpm install --frozen-lockfile || (cat pnpm-debug.log || true)
+    && pnpm install || (cat pnpm-debug.log || true)
 
 # Copy the rest of the code
 COPY . .
