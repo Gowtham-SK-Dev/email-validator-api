@@ -1,5 +1,11 @@
+# Ensure the file is named netlify.toml (not netlify.toml or netlify.toml.txt)
+# and is placed at the root of your repository.
+
 [build]
   functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
 
 [[redirects]]
   from = "/api/validate-email"
