@@ -40,12 +40,14 @@ app.use("*", (req, res) => {
   })
 })
 
-// Add a startup message that shows the environment
-app.listen(PORT, () => {
-  console.log(`🚀 Email Validator API running on port ${PORT}`)
-  console.log(`📊 Health check: http://localhost:${PORT}/health`)
-  console.log(`📧 Validate emails: POST http://localhost:${PORT}/api/validate-email`)
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
-})
+// Only start the server if not running in a serverless environment (like Netlify or Vercel)
+if (!process.env.NETLIFY && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Email Validator API running on port ${PORT}`)
+    console.log(`📊 Health check: http://localhost:${PORT}/health`)
+    console.log(`📧 Validate emails: POST http://localhost:${PORT}/api/validate-email`)
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
+  })
+}
 
 export default app
