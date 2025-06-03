@@ -97,12 +97,14 @@ router.post("/validate-email", async (req, res) => {
     response.valid = smtpResult.passed
 
     res.json(response)
+    return
   } catch (error) {
     console.error("Validation error:", error)
     res.status(500).json({
       error: "Internal server error during validation",
       message: error instanceof Error ? error.message : "Unknown error",
     })
+    return
   }
 })
 

@@ -15,20 +15,19 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
     let chromePath = findChromeExecutable()
     const launchOptions: any = {
       headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--disable-gpu",
+      ],
     }
 
     // Netlify: Use a serverless Chromium binary if available
     if (isNetlify) {
-      // Example: Use the chrome-aws-lambda package (add to package.json) and set executablePath
-      // const chromium = require('chrome-aws-lambda');
-      // chromePath = await chromium.executablePath;
-      // launchOptions.executablePath = chromePath;
-      // launchOptions.args = chromium.args;
-      // launchOptions.defaultViewport = chromium.defaultViewport;
-      // launchOptions.headless = chromium.headless;
-
-      // If you do not use chrome-aws-lambda, you must deploy a compatible binary and set the path here:
       chromePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium-browser"
       launchOptions.executablePath = chromePath
     } else if (chromePath) {
@@ -37,41 +36,202 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
 
     browser = await puppeteer.launch(launchOptions)
     const page = await browser.newPage()
-    await page.goto(
-      "https://accounts.google.com/v3/signin/identifier?authuser=0&continue=https%3A%2F%2Fmyaccount.google.com%2F&ec=GAlAwAE&hl=en&service=accountsettings&flowName=GlifWebSignIn&flowEntry=AddSession",
-      { waitUntil: "domcontentloaded", timeout: 20000 },
+
+    // Set a realistic user agent
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     )
 
-    await page.waitForSelector('input[type="email"]', { timeout: 10000 })
-    await page.evaluate(() => {
-      const input = document.querySelector('input[type="email"]') as HTMLInputElement
-      if (input) input.value = ""
+    // Navigate to Google sign-in page
+    await page.goto("https://accounts.google.com/v3/signin/identifier?dsh=S403253434%3A1748935755537260&flowEntry=ServiceLogin&flowName=GlifWebSignIn&hl=en-gb&ifkv=AdBytiN-ES0p8z37qnKT6fWPLiOxYEbXCTOjxdobxPhJVkpksbxQzS8vUmxCqGR6TAm6-6ZdFMgL1g", {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
     })
-    await page.type('input[type="email"]', email, { delay: 30 })
 
-    await page.waitForSelector("#identifierNext button, button[jsname='LgbsSe']", { timeout: 5000 })
-    await page.click("#identifierNext button, button[jsname='LgbsSe']")
+    // Wait for page to load and try multiple selectors for email input
+    const emailSelectors = [
+      'input[type="email"]',
+      'input[id="identifierId"]',
+      'input[name="identifier"]',
+      "#identifierId",
+      '[data-initial-value=""]',
+    ]
 
-    await page.waitForTimeout(2500)
+    let emailInput = null
+    for (const selector of emailSelectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 5000 })
+        emailInput = await page.$(selector)
+        if (emailInput) {
+          console.log(`🔐 Found email input with selector: ${selector}`)
+          break
+        }
+      } catch (e) {
+        console.log(`🔐 Selector ${selector} not found, trying next...`)
+        continue
+      }
+    }
 
-    const error = await page.$eval('div[jsname="B34EJ"]', (el) => el.textContent).catch(() => null)
-    if (error && error.trim()) {
+    if (!emailInput) {
       await browser.close()
-      return { status: "error", message: error.trim() }
+      return {
+        status: "technical_error",
+        message: "Could not find email input field on Google sign-in page",
+      }
     }
 
-    const passwordInput = await page.$('input[type="password"]')
+    // Clear and type email
+    await emailInput.click({ clickCount: 3 }) // Triple click to select all
+    await page.keyboard.press("Backspace") // Clear any existing text
+    await emailInput.type(email, { delay: 50 })
+
+    // Wait a moment for the input to register
+    await page.waitForTimeout(1000)
+
+    // Try multiple selectors for the Next button
+    const nextButtonSelectors = [
+      "#identifierNext",
+      'button[jsname="LgbsSe"]',
+      '[data-primary-action-label="Next"]',
+      'button:has-text("Next")',
+      'button[type="button"]:not([disabled])',
+      ".VfPpkd-LgbsSe",
+    ]
+
+    let nextButton = null
+    for (const selector of nextButtonSelectors) {
+      try {
+        nextButton = await page.$(selector)
+        if (nextButton) {
+          // Check if button is visible and enabled
+          const isVisible = await nextButton.isIntersectingViewport()
+          // Fix: Use proper type casting for the element
+          const isEnabled = await page.evaluate((el: HTMLButtonElement) => !el.disabled, nextButton as any)
+
+          if (isVisible && isEnabled) {
+            console.log(`🔐 Found Next button with selector: ${selector}`)
+            break
+          }
+        }
+      } catch (e) {
+        continue
+      }
+    }
+
+    if (!nextButton) {
+      await browser.close()
+      return {
+        status: "technical_error",
+        message: "Could not find or click Next button on Google sign-in page",
+      }
+    }
+
+    // Click the Next button
+    try {
+      await nextButton.click()
+      console.log(`🔐 Clicked Next button successfully`)
+    } catch (clickError) {
+      // Try alternative click method
+      try {
+        // Fix: Use proper type casting for the element
+        await page.evaluate((button: HTMLElement) => button.click(), nextButton as any)
+        console.log(`🔐 Clicked Next button using evaluate method`)
+      } catch (evalError: unknown) {
+        await browser.close()
+        // Fix: Handle unknown error type properly
+        const errorMessage = evalError instanceof Error ? evalError.message : "Unknown error"
+        return {
+          status: "technical_error",
+          message: "Failed to click Next button: " + errorMessage,
+        }
+      }
+    }
+
+    // Wait for response
+    await page.waitForTimeout(3000)
+
+    // Check for error messages with multiple selectors
+    const errorSelectors = ['div[jsname="B34EJ"]', ".o6cuMc", '[data-error="true"]', ".Ekjuhf", ".dEOOab"]
+
+    let errorMessage = null
+    for (const selector of errorSelectors) {
+      try {
+        const errorElement = await page.$(selector)
+        if (errorElement) {
+          errorMessage = await page.evaluate((el) => el.textContent?.trim(), errorElement)
+          if (errorMessage) {
+            console.log(`🔐 Found error message: ${errorMessage}`)
+            break
+          }
+        }
+      } catch (e) {
+        continue
+      }
+    }
+
+    if (errorMessage) {
+      await browser.close()
+      return { status: "error", message: errorMessage }
+    }
+
+    // Check if we reached password step (multiple selectors)
+    const passwordSelectors = [
+      'input[type="password"]',
+      'input[name="password"]',
+      "#password",
+      '[data-initial-value][type="password"]',
+    ]
+
+    let passwordFound = false
+    for (const selector of passwordSelectors) {
+      try {
+        const passwordInput = await page.$(selector)
+        if (passwordInput) {
+          passwordFound = true
+          console.log(`🔐 Found password input - email is valid`)
+          break
+        }
+      } catch (e) {
+        continue
+      }
+    }
+
     await browser.close()
-    if (passwordInput) {
-      return { status: "success", message: "Email is valid (password step reached, no error after Next)." }
+
+    if (passwordFound) {
+      return {
+        status: "success",
+        message: "Email is valid (reached password step)",
+      }
     }
 
-    return { status: "unknown", message: "Could not determine result (no error or password field found)." }
-  } catch (err: any) {
-    if (browser) await browser.close()
+    // Check if we're still on the same page or got redirected
+    const currentUrl = page.url()
+    if (currentUrl.includes("challenge") || currentUrl.includes("signin/v2/challenge")) {
+      return {
+        status: "success",
+        message: "Email is valid (reached challenge/verification step)",
+      }
+    }
+
+    return {
+      status: "unknown",
+      message: "Could not determine result - no error or password field found",
+    }
+  } catch (err: unknown) {
+    if (browser) {
+      try {
+        await browser.close()
+      } catch (closeError) {
+        console.error("Error closing browser:", closeError)
+      }
+    }
+
     // Distinguish Chrome not found error
     if (
       err &&
+      typeof err === "object" &&
+      "message" in err &&
       typeof err.message === "string" &&
       err.message.includes("Could not find Chrome")
     ) {
@@ -81,7 +241,13 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
           "Chrome browser not found for Puppeteer. Please install Chrome or run `npx puppeteer browsers install chrome`.",
       }
     }
-    return { status: "technical_error", message: "Puppeteer error: " + err.message }
+
+    console.error("🔐 Puppeteer error details:", err)
+    const errorMessage = err instanceof Error ? err.message : "Unknown error"
+    return {
+      status: "technical_error",
+      message: "Puppeteer error: " + errorMessage,
+    }
   }
 }
 
@@ -134,7 +300,7 @@ export async function testGoogleSigninWithRetry(
 }
 
 // Alternative Gmail validation (simplified - only for format checking)
-async function alternativeGmailValidation(email: string): Promise<{ status: string; message: string }> {
+export async function alternativeGmailValidation(email: string): Promise<{ status: string; message: string }> {
   console.log(`🔄 Using alternative Gmail validation for: ${email}`)
 
   if (!email.endsWith("@gmail.com")) {
@@ -165,6 +331,37 @@ async function alternativeGmailValidation(email: string): Promise<{ status: stri
     return {
       status: "error",
       message: "Invalid dot placement in Gmail address",
+    }
+  }
+
+  // Check for common test patterns that are unlikely to be real
+  if (
+    /^test[0-9]*$/i.test(localPart) ||
+    /^user[0-9]*$/i.test(localPart) ||
+    /^example[0-9]*$/i.test(localPart) ||
+    /^sample[0-9]*$/i.test(localPart) ||
+    /^fake[0-9]*$/i.test(localPart) ||
+    /^dummy[0-9]*$/i.test(localPart)
+  ) {
+    return {
+      status: "error",
+      message: "Gmail address appears to be a test account",
+    }
+  }
+
+  // Check for keyboard patterns
+  if (/qwerty/i.test(localPart) || /asdfg/i.test(localPart) || /12345/i.test(localPart) || /abcde/i.test(localPart)) {
+    return {
+      status: "error",
+      message: "Gmail address contains keyboard pattern",
+    }
+  }
+
+  // Check for realistic patterns that are likely valid
+  if (/^[a-z]+\.[a-z]+[0-9]{0,3}$/i.test(localPart)) {
+    return {
+      status: "success",
+      message: "Gmail format appears valid (firstname.lastname pattern)",
     }
   }
 

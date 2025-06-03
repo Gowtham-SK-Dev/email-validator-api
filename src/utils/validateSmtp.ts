@@ -32,7 +32,17 @@ export async function validateSmtp(email: string): Promise<ValidationResult> {
     }
 
     // Run inbox existence validation
-    const inboxResult = await validateInboxExistence(email)
+    let inboxResult
+    try {
+      inboxResult = await validateInboxExistence(email)
+    } catch (inboxError) {
+      console.error("Inbox validation error:", inboxError)
+      // If inbox validation fails, still use smart validation result
+      return {
+        ...smartResult,
+        message: `${smartResult.message} | Inbox validation failed: ${inboxError instanceof Error ? inboxError.message : "Unknown error"}`,
+      }
+    }
 
     // Combine results
     const combinedConfidence = Math.round((smartResult.confidence || 0) * 0.6 + inboxResult.confidence * 0.4)
@@ -50,7 +60,17 @@ export async function validateSmtp(email: string): Promise<ValidationResult> {
       inboxValidation: inboxResult,
     }
   } catch (error) {
+    console.error("SMTP validation error:", error)
     // Fallback to smart validation only
-    return await validateSmtpSmart(email)
+    try {
+      return await validateSmtpSmart(email)
+    } catch (smartError) {
+      // Last resort fallback
+      return {
+        passed: false,
+        message: `SMTP validation failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        confidence: 0,
+      }
+    }
   }
 }
