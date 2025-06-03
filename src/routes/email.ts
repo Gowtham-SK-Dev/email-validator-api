@@ -62,39 +62,63 @@ router.post("/validate-email", async (req, res) => {
       return res.json(response)
     }
 
-    // 2. Role-based email check
-    const roleResult = isRoleEmail(email)
-    response.results.roleBased = roleResult
+    // Check if it's a Gmail address
+    const domain = email.split("@")[1]?.toLowerCase()
+    const isGmail = domain === "gmail.com"
 
-    if (!roleResult.passed) {
-      response.valid = false
-      return res.json(response)
+    // 2. Role-based email check (skip for Gmail)
+    if (!isGmail) {
+      const roleResult = isRoleEmail(email)
+      response.results.roleBased = roleResult
+
+      if (!roleResult.passed) {
+        response.valid = false
+        return res.json(response)
+      }
+    } else {
+      // Auto-pass role check for Gmail
+      response.results.roleBased = { passed: true, message: "Gmail addresses are not checked for role-based patterns" }
     }
 
-    // 3. Disposable domain check
-    const disposableResult = await isDisposableDomain(email)
-    response.results.disposableDomain = disposableResult
+    // 3. Disposable domain check (skip for Gmail)
+    if (!isGmail) {
+      const disposableResult = await isDisposableDomain(email)
+      response.results.disposableDomain = disposableResult
 
-    if (!disposableResult.passed) {
-      response.valid = false
-      return res.json(response)
+      if (!disposableResult.passed) {
+        response.valid = false
+        return res.json(response)
+      }
+    } else {
+      // Auto-pass disposable check for Gmail
+      response.results.disposableDomain = { passed: true, message: "Gmail is not a disposable domain" }
     }
 
-    // 4. MX record validation
-    const mxResult = await validateMx(email)
-    response.results.mx = mxResult
+    // 4. MX record validation (skip for Gmail)
+    if (!isGmail) {
+      const mxResult = await validateMx(email)
+      response.results.mx = mxResult
 
-    if (!mxResult.passed) {
-      response.valid = false
-      return res.json(response)
+      if (!mxResult.passed) {
+        response.valid = false
+        return res.json(response)
+      }
+    } else {
+      // Auto-pass MX check for Gmail
+      response.results.mx = { passed: true, message: "Gmail has valid MX records" }
     }
 
     // 5. SMTP mailbox validation
     const smtpResult = await validateSmtp(email)
     response.results.smtp = smtpResult
 
-    // Final validation result
-    response.valid = smtpResult.passed
+    // Final validation result - ALL checks must pass
+    response.valid =
+      syntaxResult.passed &&
+      response.results.roleBased.passed &&
+      response.results.disposableDomain.passed &&
+      response.results.mx.passed &&
+      smtpResult.passed
 
     res.json(response)
     return

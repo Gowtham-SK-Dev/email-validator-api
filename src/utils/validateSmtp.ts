@@ -11,7 +11,29 @@ interface ValidationResult {
 }
 
 export async function validateSmtp(email: string): Promise<ValidationResult> {
-  const domain = email.split("@")[1]
+  const domain = email.split("@")[1]?.toLowerCase()
+
+  // Special handling for Gmail addresses - skip other validations
+  if (domain === "gmail.com") {
+    console.log("📧 Gmail address detected - using direct Google validation")
+    try {
+      // For Gmail, we only use the smart validation which includes Google sign-in test
+      const smartResult = await validateSmtpSmart(email)
+
+      // Return the result directly without additional validations
+      return {
+        ...smartResult,
+        message: `Gmail validation: ${smartResult.message}`,
+      }
+    } catch (error) {
+      console.error("Gmail validation error:", error)
+      return {
+        passed: false,
+        message: `Gmail validation failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        confidence: 0,
+      }
+    }
+  }
 
   // Check if we're in a serverless environment
   const isServerless = !!(
