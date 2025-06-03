@@ -40,14 +40,14 @@ app.use("*", (req, res) => {
   })
 })
 
-// Only start the server if not running in a serverless environment (like Netlify or Vercel)
-if (!process.env.NETLIFY && !process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`🚀 Email Validator API running on port ${PORT}`)
-    console.log(`📊 Health check: http://localhost:${PORT}/health`)
-    console.log(`📧 Validate emails: POST http://localhost:${PORT}/api/validate-email`)
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
-  })
-}
+// Start the server in all environments
+app.listen(PORT, () => {
+  console.log(`🚀 Email Validator API running on port ${PORT}`)
+  console.log(`📊 Health check: http://localhost:${PORT}/health`)
+  console.log(`📧 Validate emails: POST http://localhost:${PORT}/api/validate-email`)
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
+  console.log(`🔧 Serverless: ${!!(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME)}`)
+})
 
 export default app
+  
