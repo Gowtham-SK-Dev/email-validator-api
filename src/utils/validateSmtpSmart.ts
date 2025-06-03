@@ -10,56 +10,19 @@ interface ValidationResult {
   details?: any
 }
 
-interface SmartValidationCache {
-  [domain: string]: {
-    result: ValidationResult
-    timestamp: number
-    ttl: number
-  }
-}
-
 interface AnalysisResult {
   score: number
   maxScore: number
   [key: string]: any
 }
 
-// In-memory cache for domain validation results
-const validationCache: SmartValidationCache = {}
-
 export async function validateSmtpSmart(email: string): Promise<ValidationResult> {
   const domain = email.split("@")[1]
   const localPart = email.split("@")[0]
 
-  // Check cache first with proper TTL validation
-  const cachedResult = getCachedResult(domain)
-  if (cachedResult) {
-    // Re-analyze local part even for cached domains since local parts can vary
-    const localPartAnalysis = analyzeLocalPart(localPart)
-
-    // If local part is clearly invalid, override cached result
-    if (localPartAnalysis.score < -30) {
-      return {
-        passed: false,
-        message: `Invalid email - ${localPartAnalysis.invalidReason || "Local part appears invalid"}`,
-        confidence: Math.max(0, 30 - Math.abs(localPartAnalysis.score)),
-        details: { localPartAnalysis },
-      }
-    }
-
-    return {
-      ...cachedResult,
-      message: `${cachedResult.message} (cached)`,
-    }
-  }
-
   try {
-    // Multi-layer smart validation
+    // Direct smart validation without any caching
     const result = await performSmartValidation(email, domain, localPart)
-
-    // Cache the result with TTL (only cache domain-level analysis)
-    setCachedResult(domain, result)
-
     return result
   } catch (error) {
     return {
@@ -88,45 +51,7 @@ async function performSmartValidation(email: string, domain: string, localPart: 
     }
   }
 
-  // 2. Domain Intelligence Analysis
-  const domainAnalysis = await analyzeDomain(domain)
-  console.log(`🌐 Domain analysis score: ${domainAnalysis.score}`)
-
-  // 3. MX Record Deep Analysis
-  const mxAnalysis = await analyzeMxRecords(domain)
-  console.log(`📧 MX analysis score: ${mxAnalysis.score}`)
-
-  // 4. Pattern Recognition
-  const patternAnalysis = analyzeEmailPatterns(email)
-  console.log(`🔍 Pattern analysis score: ${patternAnalysis.score}`)
-
-  // 5. Reputation Check
-  const reputationAnalysis = await checkDomainReputation(domain)
-  console.log(`🛡️ Reputation analysis score: ${reputationAnalysis.score}`)
-
-  // Calculate confidence score with proper normalization
-  const confidence = calculateConfidenceScore({
-    domainAnalysis,
-    localPartAnalysis,
-    mxAnalysis,
-    patternAnalysis,
-    reputationAnalysis,
-  })
-  console.log(`📊 Calculated confidence score: ${confidence}%`)
-
-  // Make final decision based on confidence threshold
-  let passed = confidence >= 60
-  let message = generateSmartMessage(passed, confidence, {
-    domainAnalysis,
-    localPartAnalysis,
-    mxAnalysis,
-    patternAnalysis,
-    reputationAnalysis,
-  })
-
-  console.log(`📋 Initial validation result: ${passed ? "PASSED" : "FAILED"} - ${message}`)
-
-  // 6. Google Sign-in existence check (ONLY for Gmail)
+  // 6. Google Sign-in existence check (ONLY for Gmail) - DO THIS BEFORE CACHING
   let googleSigninResult: { status: string; message: string } | null = null
   if (domain.toLowerCase() === "gmail.com") {
     try {
@@ -165,6 +90,25 @@ async function performSmartValidation(email: string, domain: string, localPart: 
           message: "Could not perform Gmail validation",
         }
       }
+
+      // For Gmail, if we get a definitive result from Google sign-in, return immediately
+      if (googleSigninResult.status === "success") {
+        console.log(`🔐 ✅ Gmail verification SUCCESS - returning immediately`)
+        return {
+          passed: true,
+          message: `✅ Gmail account verified: ${googleSigninResult.message}`,
+          confidence: 95,
+          details: { googleSigninResult },
+        }
+      } else if (googleSigninResult.status === "error") {
+        console.log(`🔐 ❌ Gmail verification FAILED - returning immediately`)
+        return {
+          passed: false,
+          message: `❌ Gmail verification failed: ${googleSigninResult.message}`,
+          confidence: 90,
+          details: { googleSigninResult },
+        }
+      }
     } catch (error) {
       console.error(`🔐 All Gmail validation methods failed:`, error)
       googleSigninResult = {
@@ -174,25 +118,49 @@ async function performSmartValidation(email: string, domain: string, localPart: 
     }
   }
 
-  // Apply Google sign-in results with improved logic
+  // 2. Domain Intelligence Analysis
+  const domainAnalysis = await analyzeDomain(domain)
+  console.log(`🌐 Domain analysis score: ${domainAnalysis.score}`)
+
+  // 3. MX Record Deep Analysis
+  const mxAnalysis = await analyzeMxRecords(domain)
+  console.log(`📧 MX analysis score: ${mxAnalysis.score}`)
+
+  // 4. Pattern Recognition
+  const patternAnalysis = analyzeEmailPatterns(email)
+  console.log(`🔍 Pattern analysis score: ${patternAnalysis.score}`)
+
+  // 5. Reputation Check
+  const reputationAnalysis = await checkDomainReputation(domain)
+  console.log(`🛡️ Reputation analysis score: ${reputationAnalysis.score}`)
+
+  // Calculate confidence score with proper normalization
+  const confidence = calculateConfidenceScore({
+    domainAnalysis,
+    localPartAnalysis,
+    mxAnalysis,
+    patternAnalysis,
+    reputationAnalysis,
+  })
+  console.log(`📊 Calculated confidence score: ${confidence}%`)
+
+  // Make final decision based on confidence threshold
+  const passed = confidence >= 60
+  let message = generateSmartMessage(passed, confidence, {
+    domainAnalysis,
+    localPartAnalysis,
+    mxAnalysis,
+    patternAnalysis,
+    reputationAnalysis,
+  })
+
+  console.log(`📋 Initial validation result: ${passed ? "PASSED" : "FAILED"} - ${message}`)
+
+  // Apply Google sign-in results if we have them (for technical errors or unknown status)
   if (googleSigninResult) {
     console.log(`🔐 Applying Google sign-in result: ${googleSigninResult.status}`)
 
     switch (googleSigninResult.status) {
-      case "success":
-        // Gmail account exists and is valid - OVERRIDE to success
-        passed = true
-        message = `✅ Gmail account verified: ${googleSigninResult.message}`
-        console.log(`🔐 ✅ Gmail verification SUCCESS - overriding to PASSED`)
-        break
-
-      case "error":
-        // Gmail account doesn't exist or has issues - OVERRIDE to failure
-        passed = false
-        message = `❌ Gmail verification failed: ${googleSigninResult.message}`
-        console.log(`🔐 ❌ Gmail verification FAILED - overriding to FAILED`)
-        break
-
       case "technical_error":
         // Technical issue, don't override but append info
         message += ` | Gmail check failed: ${googleSigninResult.message}`
@@ -757,36 +725,6 @@ function generateSmartMessage(
       return `Likely invalid email (${confidence}%)${reason}`
     } else {
       return `Possibly invalid email (${confidence}%)${reason}`
-    }
-  }
-}
-
-function getCachedResult(domain: string): ValidationResult | null {
-  const cached = validationCache[domain]
-  if (cached && Date.now() - cached.timestamp < cached.ttl) {
-    return cached.result
-  }
-
-  if (cached) {
-    delete validationCache[domain]
-  }
-
-  return null
-}
-
-function setCachedResult(domain: string, result: ValidationResult): void {
-  validationCache[domain] = {
-    result,
-    timestamp: Date.now(),
-    ttl: 3600000,
-  }
-}
-
-export function cleanupExpiredCache(): void {
-  const now = Date.now()
-  for (const [domain, cached] of Object.entries(validationCache)) {
-    if (now - cached.timestamp >= cached.ttl) {
-      delete validationCache[domain]
     }
   }
 }

@@ -23,6 +23,27 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
         "--no-first-run",
         "--no-zygote",
         "--disable-gpu",
+        "--disable-web-security",
+        "--disable-features=VizDisplayCompositor",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-field-trial-config",
+        "--disable-back-forward-cache",
+        "--disable-ipc-flooding-protection",
+        // Add randomization to avoid fingerprinting
+        `--window-size=${1200 + Math.floor(Math.random() * 400)},${800 + Math.floor(Math.random() * 300)}`,
+        "--disable-blink-features=AutomationControlled",
+        "--disable-default-apps",
+        "--disable-extensions",
+        "--disable-plugins",
+        "--disable-sync",
+        "--disable-translate",
+        "--hide-scrollbars",
+        "--mute-audio",
+        "--no-default-browser-check",
+        "--no-pings",
+        "--disable-background-networking",
       ],
     }
 
@@ -37,16 +58,52 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
     browser = await puppeteer.launch(launchOptions)
     const page = await browser.newPage()
 
-    // Set a realistic user agent
-    await page.setUserAgent(
+    // Clear any existing data and set fresh context
+    await page.evaluateOnNewDocument(() => {
+      // Clear localStorage and sessionStorage
+      localStorage.clear()
+      sessionStorage.clear()
+
+      // Remove automation indicators
+      Object.defineProperty(navigator, "webdriver", {
+        get: () => undefined,
+      })
+
+      // Randomize some properties to avoid fingerprinting
+      Object.defineProperty(navigator, "languages", {
+        get: () => ["en-US", "en"],
+      })
+
+      Object.defineProperty(navigator, "plugins", {
+        get: () => [1, 2, 3, 4, 5],
+      })
+    })
+
+    // Set a realistic user agent with slight randomization
+    const userAgents = [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    )
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    ]
+    await page.setUserAgent(userAgents[Math.floor(Math.random() * userAgents.length)])
+
+    // Set viewport with randomization
+    await page.setViewport({
+      width: 1200 + Math.floor(Math.random() * 400),
+      height: 800 + Math.floor(Math.random() * 300),
+    })
+
+    // Add random delay to avoid pattern detection
+    await page.waitForTimeout(1000 + Math.floor(Math.random() * 2000))
 
     // Navigate to Google sign-in page
-    await page.goto("https://accounts.google.com/v3/signin/identifier?dsh=S403253434%3A1748935755537260&flowEntry=ServiceLogin&flowName=GlifWebSignIn&hl=en-gb&ifkv=AdBytiN-ES0p8z37qnKT6fWPLiOxYEbXCTOjxdobxPhJVkpksbxQzS8vUmxCqGR6TAm6-6ZdFMgL1g", {
+    await page.goto("https://accounts.google.com/signin/v2/identifier?flowName=GlifWebSignIn&flowEntry=ServiceLogin", {
       waitUntil: "domcontentloaded",
       timeout: 30000,
     })
+
+    // Wait for page to stabilize
+    await page.waitForTimeout(2000 + Math.floor(Math.random() * 1000))
 
     // Wait for page to load and try multiple selectors for email input
     const emailSelectors = [
@@ -80,13 +137,19 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
       }
     }
 
-    // Clear and type email
+    // Clear and type email with human-like behavior
     await emailInput.click({ clickCount: 3 }) // Triple click to select all
+    await page.waitForTimeout(200 + Math.floor(Math.random() * 300))
     await page.keyboard.press("Backspace") // Clear any existing text
-    await emailInput.type(email, { delay: 50 })
+    await page.waitForTimeout(100 + Math.floor(Math.random() * 200))
 
-    // Wait a moment for the input to register
-    await page.waitForTimeout(1000)
+    // Type with human-like delays
+    for (const char of email) {
+      await page.keyboard.type(char, { delay: 50 + Math.floor(Math.random() * 100) })
+    }
+
+    // Wait for input to register
+    await page.waitForTimeout(1000 + Math.floor(Math.random() * 500))
 
     // Try multiple selectors for the Next button
     const nextButtonSelectors = [
@@ -105,7 +168,6 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
         if (nextButton) {
           // Check if button is visible and enabled
           const isVisible = await nextButton.isIntersectingViewport()
-          // Fix: Use proper type casting for the element
           const isEnabled = await page.evaluate((el: HTMLButtonElement) => !el.disabled, nextButton as any)
 
           if (isVisible && isEnabled) {
@@ -126,19 +188,20 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
       }
     }
 
-    // Click the Next button
+    // Add small delay before clicking
+    await page.waitForTimeout(500 + Math.floor(Math.random() * 500))
+
+    // Click the Next button with human-like behavior
     try {
       await nextButton.click()
       console.log(`🔐 Clicked Next button successfully`)
     } catch (clickError) {
       // Try alternative click method
       try {
-        // Fix: Use proper type casting for the element
         await page.evaluate((button: HTMLElement) => button.click(), nextButton as any)
         console.log(`🔐 Clicked Next button using evaluate method`)
       } catch (evalError: unknown) {
         await browser.close()
-        // Fix: Handle unknown error type properly
         const errorMessage = evalError instanceof Error ? evalError.message : "Unknown error"
         return {
           status: "technical_error",
@@ -147,11 +210,18 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
       }
     }
 
-    // Wait for response
-    await page.waitForTimeout(3000)
+    // Wait for response with longer timeout
+    await page.waitForTimeout(4000 + Math.floor(Math.random() * 2000))
 
     // Check for error messages with multiple selectors
-    const errorSelectors = ['div[jsname="B34EJ"]', ".o6cuMc", '[data-error="true"]', ".Ekjuhf", ".dEOOab"]
+    const errorSelectors = [
+      'div[jsname="B34EJ"]',
+      ".o6cuMc",
+      '[data-error="true"]',
+      ".Ekjuhf",
+      ".dEOOab",
+      '[role="alert"]',
+    ]
 
     let errorMessage = null
     for (const selector of errorSelectors) {
@@ -159,7 +229,7 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
         const errorElement = await page.$(selector)
         if (errorElement) {
           errorMessage = await page.evaluate((el) => el.textContent?.trim(), errorElement)
-          if (errorMessage) {
+          if (errorMessage && errorMessage.length > 0) {
             console.log(`🔐 Found error message: ${errorMessage}`)
             break
           }
@@ -180,6 +250,7 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
       'input[name="password"]',
       "#password",
       '[data-initial-value][type="password"]',
+      '[aria-label*="password" i]',
     ]
 
     let passwordFound = false
@@ -273,8 +344,9 @@ export async function testGoogleSigninWithRetry(
 
       // If technical error and we have retries left, try again
       if (result.status === "technical_error" && attempt < maxRetries) {
-        console.log(`🔐 Technical error on attempt ${attempt}, retrying in 3 seconds...`)
-        await new Promise((resolve) => setTimeout(resolve, 3000))
+        console.log(`🔐 Technical error on attempt ${attempt}, retrying in 5 seconds...`)
+        // Longer delay between retries to avoid rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 5000 + Math.floor(Math.random() * 3000)))
         continue
       }
 
@@ -284,8 +356,8 @@ export async function testGoogleSigninWithRetry(
       console.error(`🔐 Attempt ${attempt} failed with error:`, error)
 
       if (attempt < maxRetries) {
-        console.log(`🔐 Retrying after error in 3 seconds...`)
-        await new Promise((resolve) => setTimeout(resolve, 3000))
+        console.log(`🔐 Retrying after error in 5 seconds...`)
+        await new Promise((resolve) => setTimeout(resolve, 5000 + Math.floor(Math.random() * 3000)))
         continue
       }
 
