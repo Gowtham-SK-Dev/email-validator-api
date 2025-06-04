@@ -56,11 +56,11 @@ async function performSmartValidation(email: string, domain: string, localPart: 
   if (domain.toLowerCase() === "gmail.com") {
     try {
       await ensurePuppeteerReady()
-      console.log(`🔐 Starting Google sign-in test for Gmail address: ${email}`)
+      console.log(`🔐 Starting optimized Google sign-in test for Gmail address: ${email}`)
 
-      // First try the Google sign-in test
+      // Use the optimized Google sign-in test with reduced retries for speed
       try {
-        googleSigninResult = await testGoogleSigninWithRetry(email, 2)
+        googleSigninResult = await testGoogleSigninWithRetry(email, 1) // Reduced retries for speed
 
         // If Chrome is not found, use alternative Gmail validation
         if (googleSigninResult && googleSigninResult.status === "chrome_not_found") {

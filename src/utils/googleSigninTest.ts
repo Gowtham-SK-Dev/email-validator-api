@@ -1,18 +1,38 @@
-// Netlify/Serverless Chrome support note:
-// Netlify does not support installing Chrome via `npx puppeteer browsers install chrome` at build/runtime.
-// You must use a serverless-compatible Chromium binary and set the executable path for Puppeteer.
-
-import puppeteer from "puppeteer"
+import puppeteer, { type Browser, type Page } from "puppeteer"
 import { findChromeExecutable } from "./puppeteer-setup"
 
 const isNetlify = !!process.env.NETLIFY
 
-export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
-  console.log(`🔐 Starting Google sign-in test for: ${email}`)
+// Browser pool for reusing browser instances
+class BrowserPool {
+  private browsers: Browser[] = []
+  private maxBrowsers = 3
+  private currentIndex = 0
+  private isInitialized = false
 
-  let browser
-  let page
-  try {
+  async initialize() {
+    if (this.isInitialized) return
+
+    console.log(`🔐 Initializing browser pool with ${this.maxBrowsers} browsers...`)
+
+    const launchOptions = this.getLaunchOptions()
+
+    // Launch browsers in parallel
+    const browserPromises = Array(this.maxBrowsers)
+      .fill(null)
+      .map(() => puppeteer.launch(launchOptions))
+
+    try {
+      this.browsers = await Promise.all(browserPromises)
+      this.isInitialized = true
+      console.log(`🔐 Browser pool initialized successfully`)
+    } catch (error) {
+      console.error(`🔐 Failed to initialize browser pool:`, error)
+      throw error
+    }
+  }
+
+  private getLaunchOptions() {
     let chromePath = findChromeExecutable()
     const launchOptions: any = {
       headless: "new",
@@ -43,10 +63,16 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
         "--mute-audio",
         "--no-default-browser-check",
         "--no-pings",
+        "--disable-logging",
+        "--disable-dev-tools",
+        "--disable-crash-reporter",
+        "--disable-in-process-stack-traces",
+        "--disable-logging-redirect",
+        "--log-level=3",
+        "--silent",
       ],
     }
 
-    // Netlify: Use a serverless Chromium binary if available
     if (isNetlify) {
       chromePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium-browser"
       launchOptions.executablePath = chromePath
@@ -54,316 +80,396 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
       launchOptions.executablePath = chromePath
     }
 
-    console.log(`🔐 Launching browser...`)
-    browser = await puppeteer.launch(launchOptions)
+    return launchOptions
+  }
 
-    console.log(`🔐 Creating new page...`)
+  async getBrowser(): Promise<Browser> {
+    if (!this.isInitialized) {
+      await this.initialize()
+    }
+
+    const browser = this.browsers[this.currentIndex]
+    this.currentIndex = (this.currentIndex + 1) % this.maxBrowsers
+
+    // Check if browser is still connected
+    if (!browser.isConnected()) {
+      console.log(`🔐 Browser disconnected, relaunching...`)
+      const newBrowser = await puppeteer.launch(this.getLaunchOptions())
+      this.browsers[this.currentIndex] = newBrowser
+      return newBrowser
+    }
+
+    return browser
+  }
+
+  async cleanup() {
+    console.log(`🔐 Cleaning up browser pool...`)
+    await Promise.all(
+      this.browsers.map((browser) => browser.close().catch((err) => console.error("Error closing browser:", err))),
+    )
+    this.browsers = []
+    this.isInitialized = false
+  }
+}
+
+// Global browser pool instance
+const browserPool = new BrowserPool()
+
+// Cache for recent validations (5 minute cache)
+const validationCache = new Map<string, { result: any; timestamp: number }>()
+const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+
+// Enhanced element interaction utilities
+async function waitForElementAndClick(page: Page, selectors: string[], timeout = 10000): Promise<boolean> {
+  console.log(`🔐 Waiting for clickable element with selectors: ${selectors.join(", ")}`)
+
+  const startTime = Date.now()
+
+  while (Date.now() - startTime < timeout) {
+    for (const selector of selectors) {
+      try {
+        // Wait for element to exist
+        const element = await page.$(selector)
+        if (!element) continue
+
+        // Check if element is visible and enabled
+        const isVisible = await element.isIntersectingViewport()
+        if (!isVisible) continue
+
+        const isEnabled = await page.evaluate((el) => {
+          const htmlEl = el as HTMLElement
+          if (htmlEl instanceof HTMLButtonElement) {
+            return !htmlEl.disabled
+          }
+          if (htmlEl instanceof HTMLInputElement) {
+            return !htmlEl.disabled
+          }
+          return true
+        }, element)
+
+        if (!isEnabled) continue
+
+        console.log(`🔐 Found clickable element with selector: ${selector}`)
+
+        // Try multiple click methods
+        try {
+          // Method 1: Regular click
+          await element.click()
+          console.log(`🔐 Successfully clicked element using regular click`)
+          return true
+        } catch (clickError1) {
+          console.log(`🔐 Regular click failed, trying evaluate click`)
+
+          try {
+            // Method 2: Evaluate click
+            await page.evaluate((el) => {
+              const htmlEl = el as HTMLElement
+              if (htmlEl && typeof htmlEl.click === "function") {
+                htmlEl.click()
+              }
+            }, element)
+            console.log(`🔐 Successfully clicked element using evaluate click`)
+            return true
+          } catch (clickError2) {
+            console.log(`🔐 Evaluate click failed, trying coordinate click`)
+
+            try {
+              // Method 3: Click at element coordinates
+              const box = await element.boundingBox()
+              if (box) {
+                await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+                console.log(`🔐 Successfully clicked element using coordinate click`)
+                return true
+              }
+            } catch (clickError3) {
+              console.log(`🔐 All click methods failed for selector ${selector}:`, clickError3)
+            }
+          }
+        }
+      } catch (error) {
+        // Continue to next selector
+        continue
+      }
+    }
+
+    // Wait a bit before trying again
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+
+  console.log(`🔐 Failed to find and click any element after ${timeout}ms`)
+  return false
+}
+
+async function waitForElementAndType(page: Page, selectors: string[], text: string, timeout = 10000): Promise<boolean> {
+  console.log(`🔐 Waiting for input element with selectors: ${selectors.join(", ")}`)
+
+  const startTime = Date.now()
+
+  while (Date.now() - startTime < timeout) {
+    for (const selector of selectors) {
+      try {
+        // Wait for element to exist
+        const element = await page.$(selector)
+        if (!element) continue
+
+        // Check if element is visible
+        const isVisible = await element.isIntersectingViewport()
+        if (!isVisible) continue
+
+        console.log(`🔐 Found input element with selector: ${selector}`)
+
+        try {
+          // Clear the field first
+          await element.click({ clickCount: 3 })
+          await page.keyboard.press("Backspace")
+          await new Promise((resolve) => setTimeout(resolve, 200))
+
+          // Type the text
+          await element.type(text, { delay: 50 })
+          console.log(`🔐 Successfully typed text into element`)
+          return true
+        } catch (typeError) {
+          console.log(`🔐 Typing failed for selector ${selector}:`, typeError)
+
+          try {
+            // Alternative method: Focus and use keyboard
+            await element.focus()
+            await page.keyboard.down("Control")
+            await page.keyboard.press("a")
+            await page.keyboard.up("Control")
+            await page.keyboard.type(text, { delay: 50 })
+            console.log(`🔐 Successfully typed text using alternative method`)
+            return true
+          } catch (altTypeError) {
+            console.log(`🔐 Alternative typing method also failed:`, altTypeError)
+          }
+        }
+      } catch (error) {
+        // Continue to next selector
+        continue
+      }
+    }
+
+    // Wait a bit before trying again
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+
+  console.log(`🔐 Failed to find and type into any element after ${timeout}ms`)
+  return false
+}
+
+export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
+  console.log(`🔐 Starting optimized Google sign-in test for: ${email}`)
+
+  // Check cache first
+  const cached = validationCache.get(email)
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    console.log(`🔐 Returning cached result for: ${email}`)
+    return cached.result
+  }
+
+  const startTime = Date.now()
+  let page: Page | null = null
+  let browser: Browser | null = null
+
+  try {
+    // Get browser from pool
+    browser = await browserPool.getBrowser()
+
+    // Create a fresh page for each validation to avoid state issues
     page = await browser.newPage()
 
-    // Set user agent before any navigation
+    // Set user agent and viewport
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     )
 
-    // Set viewport
-    await page.setViewport({
-      width: 1280,
-      height: 800,
-    })
+    await page.setViewport({ width: 1280, height: 800 })
 
     // Add script to remove automation indicators
     await page.evaluateOnNewDocument(() => {
-      // Remove webdriver property
       Object.defineProperty(navigator, "webdriver", {
         get: () => undefined,
       })
-
-      // Clear storage
       try {
         localStorage.clear()
         sessionStorage.clear()
-      } catch (e) {
-        // Ignore errors
-      }
+      } catch (e) {}
     })
 
-    // Wait a bit to ensure page is ready
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    console.log(`🔐 Browser and page ready in ${Date.now() - startTime}ms`)
 
-    console.log(`🔐 Navigating to Google sign-in page...`)
+    // Navigate to Google sign-in with optimized timeout
+    const navigationStart = Date.now()
+    const response = await page.goto(
+      "https://accounts.google.com/signin/v2/identifier?flowName=GlifWebSignIn&flowEntry=ServiceLogin",
+      {
+        waitUntil: "domcontentloaded",
+        timeout: 15000,
+      },
+    )
 
-    // Navigate with robust error handling
-    let navigationSuccess = false
-    let navigationError = null
-
-    try {
-      const response = await page.goto(
-        "https://accounts.google.com/signin/v2/identifier?flowName=GlifWebSignIn&flowEntry=ServiceLogin",
-        {
-          waitUntil: ["domcontentloaded"],
-          timeout: 30000,
-        },
-      )
-
-      if (response && response.ok()) {
-        navigationSuccess = true
-        console.log(`🔐 Navigation successful`)
-      } else {
-        navigationError = `HTTP ${response?.status()} - ${response?.statusText()}`
-      }
-    } catch (navError) {
-      navigationError = navError instanceof Error ? navError.message : "Unknown navigation error"
-      console.error("🔐 Navigation failed:", navigationError)
+    if (!response || !response.ok()) {
+      throw new Error(`Navigation failed: HTTP ${response?.status()}`)
     }
 
-    if (!navigationSuccess) {
-      await browser.close()
-      return {
-        status: "technical_error",
-        message: `Failed to load Google sign-in page: ${navigationError}`,
-      }
-    }
+    console.log(`🔐 Navigation completed in ${Date.now() - navigationStart}ms`)
 
-    // Wait for page to stabilize after navigation
-    await new Promise((resolve) => setTimeout(resolve, 3000))
+    // Wait for page to stabilize
+    await new Promise((resolve) => setTimeout(resolve, 2000))
 
-    console.log(`🔐 Looking for email input field...`)
-
-    // Wait for and find email input with multiple attempts
+    // Enhanced email input selectors
     const emailSelectors = [
       'input[type="email"]',
       'input[id="identifierId"]',
       'input[name="identifier"]',
       "#identifierId",
+      'input[aria-label*="email" i]',
+      'input[placeholder*="email" i]',
     ]
 
-    let emailInput = null
-    let inputFound = false
+    // Type email with enhanced method
+    const emailTyped = await waitForElementAndType(page, emailSelectors, email, 10000)
 
-    for (let attempt = 0; attempt < 3 && !inputFound; attempt++) {
-      console.log(`🔐 Email input search attempt ${attempt + 1}`)
-
-      for (const selector of emailSelectors) {
-        try {
-          await page.waitForSelector(selector, { timeout: 5000 })
-          emailInput = await page.$(selector)
-          if (emailInput) {
-            const isVisible = await emailInput.isIntersectingViewport()
-            if (isVisible) {
-              console.log(`🔐 Found email input with selector: ${selector}`)
-              inputFound = true
-              break
-            }
-          }
-        } catch (e) {
-          // Continue to next selector
-        }
-      }
-
-      if (!inputFound) {
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-      }
+    if (!emailTyped) {
+      throw new Error("Could not find or interact with email input field")
     }
 
-    if (!emailInput || !inputFound) {
-      await browser.close()
-      return {
-        status: "technical_error",
-        message: "Could not find email input field on Google sign-in page",
-      }
-    }
+    console.log(`🔐 Email entered in ${Date.now() - startTime}ms`)
 
-    console.log(`🔐 Entering email address...`)
+    // Wait a moment for any dynamic updates
+    await new Promise((resolve) => setTimeout(resolve, 1000))
 
-    // Clear and enter email
-    try {
-      await emailInput.click({ clickCount: 3 })
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      await page.keyboard.press("Backspace")
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      await emailInput.type(email, { delay: 50 })
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-    } catch (inputError) {
-      await browser.close()
-      return {
-        status: "technical_error",
-        message: `Failed to enter email: ${inputError instanceof Error ? inputError.message : "Unknown error"}`,
-      }
-    }
-
-    console.log(`🔐 Looking for Next button...`)
-
-    // Find and click Next button
+    // Enhanced Next button selectors
     const nextButtonSelectors = [
       "#identifierNext",
       'button[jsname="LgbsSe"]',
       'button[type="button"]:not([disabled])',
       ".VfPpkd-LgbsSe",
+      'button[aria-label*="next" i]',
+      'button:contains("Next")',
+      "[data-continue-button]",
+      ".RveJvd",
     ]
 
-    let nextButton = null
-    let buttonFound = false
+    // Click Next button with enhanced method
+    const nextClicked = await waitForElementAndClick(page, nextButtonSelectors, 10000)
 
-    for (const selector of nextButtonSelectors) {
-      try {
-        nextButton = await page.$(selector)
-        if (nextButton) {
-          const isVisible = await nextButton.isIntersectingViewport()
-          const isEnabled = await page.evaluate((el: HTMLButtonElement) => !el.disabled, nextButton as any)
+    if (!nextClicked) {
+      throw new Error("Could not find or click Next button")
+    }
 
-          if (isVisible && isEnabled) {
-            console.log(`🔐 Found Next button with selector: ${selector}`)
-            buttonFound = true
-            break
+    console.log(`🔐 Next button clicked in ${Date.now() - startTime}ms`)
+
+    // Wait for response with longer timeout for slow networks
+    await new Promise((resolve) => setTimeout(resolve, 4000))
+
+    // Check for results in parallel with enhanced selectors
+    const [errorMessage, passwordFound, challengeFound] = await Promise.all([
+      // Check for error messages with more comprehensive selectors
+      page
+        .evaluate(() => {
+          const errorSelectors = [
+            'div[jsname="B34EJ"]',
+            ".o6cuMc",
+            '[data-error="true"]',
+            ".Ekjuhf",
+            ".dEOOab",
+            '[role="alert"]',
+            ".LXRPh",
+            ".k6Zj8d",
+            ".GQ8Pzc",
+          ]
+
+          for (const selector of errorSelectors) {
+            const element = document.querySelector(selector)
+            if (element && element.textContent && element.textContent.trim()) {
+              return element.textContent.trim()
+            }
           }
-        }
-      } catch (e) {
-        // Continue to next selector
-      }
-    }
+          return null
+        })
+        .catch(() => null),
 
-    if (!nextButton || !buttonFound) {
-      await browser.close()
-      return {
-        status: "technical_error",
-        message: "Could not find Next button on Google sign-in page",
-      }
-    }
+      // Check for password field with enhanced selectors
+      page
+        .evaluate(() => {
+          const passwordSelectors = [
+            'input[type="password"]',
+            'input[name="password"]',
+            "#password",
+            'input[aria-label*="password" i]',
+            'input[placeholder*="password" i]',
+          ]
 
-    console.log(`🔐 Clicking Next button...`)
-
-    // Click Next button with error handling
-    try {
-      await nextButton.click()
-      console.log(`🔐 Next button clicked successfully`)
-    } catch (clickError) {
-      try {
-        await page.evaluate((button: HTMLElement) => button.click(), nextButton as any)
-        console.log(`🔐 Next button clicked using evaluate method`)
-      } catch (evalError) {
-        await browser.close()
-        return {
-          status: "technical_error",
-          message: `Failed to click Next button: ${evalError instanceof Error ? evalError.message : "Unknown error"}`,
-        }
-      }
-    }
-
-    // Wait for response
-    console.log(`🔐 Waiting for response...`)
-    await new Promise((resolve) => setTimeout(resolve, 5000))
-
-    // Check for error messages
-    const errorSelectors = [
-      'div[jsname="B34EJ"]',
-      ".o6cuMc",
-      '[data-error="true"]',
-      ".Ekjuhf",
-      ".dEOOab",
-      '[role="alert"]',
-    ]
-
-    let errorMessage = null
-    for (const selector of errorSelectors) {
-      try {
-        const errorElement = await page.$(selector)
-        if (errorElement) {
-          errorMessage = await page.evaluate((el) => el.textContent?.trim(), errorElement)
-          if (errorMessage && errorMessage.length > 0) {
-            console.log(`🔐 Found error message: ${errorMessage}`)
-            break
+          for (const selector of passwordSelectors) {
+            const element = document.querySelector(selector)
+            if (element) {
+              const rect = element.getBoundingClientRect()
+              return rect.width > 0 && rect.height > 0 // Check if visible
+            }
           }
-        }
-      } catch (e) {
-        // Continue checking other selectors
-      }
-    }
+          return false
+        })
+        .catch(() => false),
+
+      // Check for challenge page with enhanced selectors
+      page
+        .evaluate(() => {
+          const challengeSelectors = [
+            "[data-challenge-id]",
+            "[data-challenge-type]",
+            ".challenge-page",
+            '[aria-label*="verify" i]',
+            '[aria-label*="challenge" i]',
+            ".tosPage",
+            ".captcha",
+          ]
+
+          for (const selector of challengeSelectors) {
+            const element = document.querySelector(selector)
+            if (element) {
+              return true
+            }
+          }
+          return false
+        })
+        .catch(() => false),
+    ])
+
+    const totalTime = Date.now() - startTime
+    console.log(`🔐 Validation completed in ${totalTime}ms`)
+
+    let result: { status: string; message: string }
 
     if (errorMessage) {
-      await browser.close()
-      return { status: "error", message: errorMessage }
+      result = { status: "error", message: errorMessage }
+    } else if (passwordFound) {
+      result = { status: "success", message: "Email is valid (reached password step)" }
+    } else if (challengeFound) {
+      result = { status: "success", message: "Email is valid (reached challenge/verification step)" }
+    } else {
+      result = { status: "unknown", message: "Could not determine result - no clear indicators found" }
     }
 
-    // Check for password field (success indicator)
-    const passwordSelectors = [
-      'input[type="password"]',
-      'input[name="password"]',
-      "#password",
-      '[aria-label*="password" i]',
-    ]
+    // Cache the result
+    validationCache.set(email, { result, timestamp: Date.now() })
 
-    let passwordFound = false
-    for (const selector of passwordSelectors) {
-      try {
-        const passwordInput = await page.$(selector)
-        if (passwordInput) {
-          const isVisible = await passwordInput.isIntersectingViewport()
-          if (isVisible) {
-            passwordFound = true
-            console.log(`🔐 Found password input - email is valid`)
-            break
-          }
-        }
-      } catch (e) {
-        // Continue checking other selectors
-      }
-    }
+    // Close the page
+    await page.close()
 
-    // Check for challenge/verification page by looking for specific elements instead of URL
-    let isChallengePage = false
-    try {
-      const challengeSelectors = [
-        "[data-challenge-id]",
-        "[data-challenge-type]",
-        ".challenge-page",
-        '[aria-label*="verify" i]',
-        '[aria-label*="challenge" i]',
-      ]
-
-      for (const selector of challengeSelectors) {
-        const challengeElement = await page.$(selector)
-        if (challengeElement) {
-          isChallengePage = true
-          console.log(`🔐 Found challenge page indicator`)
-          break
-        }
-      }
-    } catch (e) {
-      // Ignore errors when checking for challenge page
-    }
-
-    await browser.close()
-
-    if (passwordFound) {
-      return {
-        status: "success",
-        message: "Email is valid (reached password step)",
-      }
-    }
-
-    if (isChallengePage) {
-      return {
-        status: "success",
-        message: "Email is valid (reached challenge/verification step)",
-      }
-    }
-
-    return {
-      status: "unknown",
-      message: "Could not determine result - no error or password field found",
-    }
+    return result
   } catch (err: unknown) {
-    console.error("🔐 Puppeteer error:", err)
+    console.error("🔐 Optimized validation error:", err)
 
-    if (browser) {
+    if (page) {
       try {
-        await browser.close()
+        await page.close()
       } catch (closeError) {
-        console.error("Error closing browser:", closeError)
+        console.error("Error closing page:", closeError)
       }
     }
 
-    // Handle specific error types
     const errorMessage = err instanceof Error ? err.message : "Unknown error"
 
     if (errorMessage.includes("Could not find Chrome") || errorMessage.includes("Executable doesn't exist")) {
@@ -383,9 +489,34 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
 
     return {
       status: "technical_error",
-      message: `Puppeteer error: ${errorMessage}`,
+      message: `Validation error: ${errorMessage}`,
     }
   }
+}
+
+// Batch processing for multiple emails
+export async function testGoogleSigninBatch(
+  emails: string[],
+): Promise<Map<string, { status: string; message: string }>> {
+  console.log(`🔐 Starting batch validation for ${emails.length} emails`)
+
+  const results = new Map<string, { status: string; message: string }>()
+  const batchSize = 3 // Process 3 emails concurrently
+
+  for (let i = 0; i < emails.length; i += batchSize) {
+    const batch = emails.slice(i, i + batchSize)
+    const batchPromises = batch.map(async (email) => {
+      const result = await testGoogleSignin(email)
+      return { email, result }
+    })
+
+    const batchResults = await Promise.all(batchPromises)
+    batchResults.forEach(({ email, result }) => {
+      results.set(email, result)
+    })
+  }
+
+  return results
 }
 
 // Enhanced version with retry logic and better error handling
@@ -393,7 +524,7 @@ export async function testGoogleSigninWithRetry(
   email: string,
   maxRetries = 2,
 ): Promise<{ status: string; message: string }> {
-  console.log(`🔐 Starting Google sign-in test with retry for: ${email} (max retries: ${maxRetries})`)
+  console.log(`🔐 Starting optimized Google sign-in test with retry for: ${email} (max retries: ${maxRetries})`)
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     console.log(`🔐 Attempt ${attempt}/${maxRetries} for email: ${email}`)
@@ -416,8 +547,8 @@ export async function testGoogleSigninWithRetry(
 
       // If technical error and we have retries left, try again
       if (result.status === "technical_error" && attempt < maxRetries) {
-        console.log(`🔐 Technical error on attempt ${attempt}, retrying in 3 seconds...`)
-        await new Promise((resolve) => setTimeout(resolve, 3000))
+        console.log(`🔐 Technical error on attempt ${attempt}, retrying in 2 seconds...`)
+        await new Promise((resolve) => setTimeout(resolve, 2000))
         continue
       }
 
@@ -427,8 +558,8 @@ export async function testGoogleSigninWithRetry(
       console.error(`🔐 Attempt ${attempt} failed with error:`, error)
 
       if (attempt < maxRetries) {
-        console.log(`🔐 Retrying after error in 3 seconds...`)
-        await new Promise((resolve) => setTimeout(resolve, 3000))
+        console.log(`🔐 Retrying after error in 2 seconds...`)
+        await new Promise((resolve) => setTimeout(resolve, 2000))
         continue
       }
 
@@ -440,6 +571,12 @@ export async function testGoogleSigninWithRetry(
   }
 
   return { status: "technical_error", message: "Max retries exceeded" }
+}
+
+// Cleanup function to be called on app shutdown
+export async function cleanupGoogleSigninTest() {
+  await browserPool.cleanup()
+  validationCache.clear()
 }
 
 // Alternative Gmail validation (simplified - only for format checking)
