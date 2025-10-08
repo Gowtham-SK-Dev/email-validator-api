@@ -25,6 +25,9 @@ interface EmailValidationResponse {
   }
 }
 
+const CACHE_TTL = 5 * 60 * 1000
+const responseCache = new Map<string, { timestamp: number; value: EmailValidationResponse }>()
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Enable CORS
   res.setHeader("Access-Control-Allow-Origin", "*")
@@ -44,7 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { email, checkInbox = true } = req.body
+    const { email, checkInbox: checkInboxLegacy = true, tests } = req.body || {}
 
     if (!email || typeof email !== "string") {
       return res.status(400).json({
@@ -52,63 +55,118 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
     }
 
+    // Normalize tests flags. Syntax always runs first (cannot be disabled).
+    const enableSmtp = typeof tests?.smtp === "boolean" ? tests.smtp : checkInboxLegacy
+    const enableMx = typeof tests?.mx === "boolean" ? tests.mx : true
+    const enableDisposable = typeof tests?.disposableDomain === "boolean" ? tests.disposableDomain : true
+    const enableRole = typeof tests?.roleBased === "boolean" ? tests.roleBased : true
+
+    // Cache key per email + tests selection
+    const cacheKey = `${email}|smtp:${enableSmtp ? 1 : 0}|mx:${enableMx ? 1 : 0}|disp:${enableDisposable ? 1 : 0}|role:${enableRole ? 1 : 0}`
+    const cached = responseCache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return res.json(cached.value)
+    }
+
     const response: EmailValidationResponse = {
       email,
       valid: false,
       results: {
         syntax: { passed: false, message: "" },
-        mx: { passed: false, message: "" },
-        smtp: { passed: false, message: "" },
-        disposableDomain: { passed: false, message: "" },
-        roleBased: { passed: false, message: "" },
+        mx: { passed: !enableMx, message: enableMx ? "" : "Skipped MX check (by request)" },
+        smtp: { passed: !enableSmtp, message: enableSmtp ? "" : "Skipped SMTP check (by request)" },
+        disposableDomain: {
+          passed: !enableDisposable,
+          message: enableDisposable ? "" : "Skipped disposable-domain check (by request)",
+        },
+        roleBased: { passed: !enableRole, message: enableRole ? "" : "Skipped role-based check (by request)" },
       },
     }
 
-    // 1. Syntax validation (first check)
+    // 1) Syntax (always run first)
     const syntaxResult = validateSyntax(email)
     response.results.syntax = syntaxResult
-
     if (!syntaxResult.passed) {
       response.valid = false
+      responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
       return res.json(response)
     }
 
-    // 2. Role-based email check
-    const roleResult = isRoleEmail(email)
-    response.results.roleBased = roleResult
+    const domain = email.split("@")[1]?.toLowerCase()
+    const isGmail = domain === "gmail.com"
 
-    if (!roleResult.passed) {
-      response.valid = false
-      return res.json(response)
+    // 2) Role-based
+    if (enableRole) {
+      if (isGmail) {
+        response.results.roleBased = {
+          passed: true,
+          message: "Gmail addresses are not checked for role-based patterns",
+        }
+      } else {
+        const roleResult = isRoleEmail(email)
+        response.results.roleBased = roleResult
+        if (!roleResult.passed) {
+          response.valid = false
+          responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
+          return res.json(response)
+        }
+      }
     }
 
-    // 3. Disposable domain check
-    const disposableResult = await isDisposableDomain(email)
-    response.results.disposableDomain = disposableResult
-
-    if (!disposableResult.passed) {
-      response.valid = false
-      return res.json(response)
+    // 3) Disposable + 4) MX
+    if (isGmail) {
+      if (enableDisposable) {
+        response.results.disposableDomain = { passed: true, message: "Gmail is not a disposable domain" }
+      }
+      if (enableMx) {
+        response.results.mx = { passed: true, message: "Gmail has valid MX records" }
+      }
+    } else {
+      const promises: Array<Promise<void>> = []
+      if (enableDisposable) {
+        promises.push(
+          isDisposableDomain(email).then((disposableResult) => {
+            response.results.disposableDomain = disposableResult
+          }),
+        )
+      }
+      if (enableMx) {
+        promises.push(
+          validateMx(email).then((mxResult) => {
+            response.results.mx = mxResult
+          }),
+        )
+      }
+      if (promises.length) {
+        await Promise.all(promises)
+      }
+      if (
+        (enableDisposable && !response.results.disposableDomain.passed) ||
+        (enableMx && !response.results.mx.passed)
+      ) {
+        response.valid = false
+        responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
+        return res.json(response)
+      }
     }
 
-    // 4. MX record validation
-    const mxResult = await validateMx(email)
-    response.results.mx = mxResult
+    // 5) SMTP
+    if (enableSmtp) {
+      const smtpResult = await validateSmtp(email)
+      response.results.smtp = smtpResult
+    } // else left as "Skipped SMTP check (by request)"
 
-    if (!mxResult.passed) {
-      response.valid = false
-      return res.json(response)
-    }
-
-    // 5. SMTP mailbox validation with inbox checking
-    const smtpResult = await validateSmtp(email)
-    response.results.smtp = smtpResult
-
-    // Final validation result - ALL checks must pass
+    // Compute final valid based only on enabled checks
     response.valid =
-      syntaxResult.passed && roleResult.passed && disposableResult.passed && mxResult.passed && smtpResult.passed
+      response.results.syntax.passed &&
+      (!enableRole || response.results.roleBased.passed) &&
+      (!enableDisposable || response.results.disposableDomain.passed) &&
+      (!enableMx || response.results.mx.passed) &&
+      (!enableSmtp || response.results.smtp.passed)
 
-    res.json(response)
+    // Cache
+    responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
+    return res.json(response)
   } catch (error) {
     console.error("Validation error:", error)
     res.status(500).json({

@@ -31,9 +31,18 @@ interface EmailValidationResponse {
   }
 }
 
+const CACHE_TTL = 5 * 60 * 1000
+const responseCache = new Map<
+  string,
+  {
+    timestamp: number
+    value: EmailValidationResponse
+  }
+>()
+
 router.post("/validate-email", async (req, res) => {
   try {
-    const { email } = req.body
+    const { email, checkInbox: checkInboxLegacy = true, tests } = req.body
 
     if (!email || typeof email !== "string") {
       return res.status(400).json({
@@ -41,87 +50,94 @@ router.post("/validate-email", async (req, res) => {
       })
     }
 
+    const enableSmtp = typeof tests?.smtp === "boolean" ? tests.smtp : checkInboxLegacy
+    const enableMx = typeof tests?.mx === "boolean" ? tests.mx : true
+    const enableDisposable = typeof tests?.disposableDomain === "boolean" ? tests.disposableDomain : true
+    const enableRole = typeof tests?.roleBased === "boolean" ? tests.roleBased : true
+
+    const cacheKey = `${email}|smtp:${enableSmtp ? 1 : 0}|mx:${enableMx ? 1 : 0}|disp:${enableDisposable ? 1 : 0}|role:${enableRole ? 1 : 0}`
+    const cached = responseCache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return res.json(cached.value)
+    }
+
     const response: EmailValidationResponse = {
       email,
       valid: false,
       results: {
         syntax: { passed: false, message: "" },
-        mx: { passed: false, message: "" },
-        smtp: { passed: false, message: "" },
-        disposableDomain: { passed: false, message: "" },
-        roleBased: { passed: false, message: "" },
+        mx: { passed: !enableMx, message: enableMx ? "" : "Skipped MX check (by request)" },
+        smtp: { passed: !enableSmtp, message: enableSmtp ? "" : "Skipped SMTP check (by request)" },
+        disposableDomain: {
+          passed: !enableDisposable,
+          message: enableDisposable ? "" : "Skipped disposable-domain check (by request)",
+        },
+        roleBased: { passed: !enableRole, message: enableRole ? "" : "Skipped role-based check (by request)" },
       },
     }
 
-    // 1. Syntax validation (first check)
     const syntaxResult = validateSyntax(email)
     response.results.syntax = syntaxResult
-
     if (!syntaxResult.passed) {
       response.valid = false
+      responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
       return res.json(response)
     }
 
-    // Check if it's a Gmail address
     const domain = email.split("@")[1]?.toLowerCase()
     const isGmail = domain === "gmail.com"
 
-    // 2. Role-based email check (skip for Gmail)
-    if (!isGmail) {
-      const roleResult = isRoleEmail(email)
-      response.results.roleBased = roleResult
-
-      if (!roleResult.passed) {
-        response.valid = false
-        return res.json(response)
+    if (enableRole) {
+      if (isGmail) {
+        response.results.roleBased = {
+          passed: true,
+          message: "Gmail addresses are not checked for role-based patterns",
+        }
+      } else {
+        const roleResult = isRoleEmail(email)
+        response.results.roleBased = roleResult
+        if (!roleResult.passed) {
+          response.valid = false
+          responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
+          return res.json(response)
+        }
       }
-    } else {
-      // Auto-pass role check for Gmail
-      response.results.roleBased = { passed: true, message: "Gmail addresses are not checked for role-based patterns" }
     }
 
-    // 3. Disposable domain check (skip for Gmail)
-    if (!isGmail) {
-      const disposableResult = await isDisposableDomain(email)
-      response.results.disposableDomain = disposableResult
+    if (isGmail) {
+      if (enableDisposable)
+        response.results.disposableDomain = { passed: true, message: "Gmail is not a disposable domain" }
+      if (enableMx) response.results.mx = { passed: true, message: "Gmail has valid MX records" }
+    } else {
+      const tasks: Promise<any>[] = []
+      if (enableDisposable) tasks.push(isDisposableDomain(email).then((r) => (response.results.disposableDomain = r)))
+      if (enableMx) tasks.push(validateMx(email).then((r) => (response.results.mx = r)))
+      if (tasks.length) await Promise.all(tasks)
 
-      if (!disposableResult.passed) {
+      if (
+        (enableDisposable && !response.results.disposableDomain.passed) ||
+        (enableMx && !response.results.mx.passed)
+      ) {
         response.valid = false
+        responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
         return res.json(response)
       }
-    } else {
-      // Auto-pass disposable check for Gmail
-      response.results.disposableDomain = { passed: true, message: "Gmail is not a disposable domain" }
     }
 
-    // 4. MX record validation (skip for Gmail)
-    if (!isGmail) {
-      const mxResult = await validateMx(email)
-      response.results.mx = mxResult
-
-      if (!mxResult.passed) {
-        response.valid = false
-        return res.json(response)
-      }
-    } else {
-      // Auto-pass MX check for Gmail
-      response.results.mx = { passed: true, message: "Gmail has valid MX records" }
+    if (enableSmtp) {
+      const smtpResult = await validateSmtp(email)
+      response.results.smtp = smtpResult
     }
 
-    // 5. SMTP mailbox validation
-    const smtpResult = await validateSmtp(email)
-    response.results.smtp = smtpResult
-
-    // Final validation result - ALL checks must pass
     response.valid =
-      syntaxResult.passed &&
-      response.results.roleBased.passed &&
-      response.results.disposableDomain.passed &&
-      response.results.mx.passed &&
-      smtpResult.passed
+      response.results.syntax.passed &&
+      (!enableRole || response.results.roleBased.passed) &&
+      (!enableDisposable || response.results.disposableDomain.passed) &&
+      (!enableMx || response.results.mx.passed) &&
+      (!enableSmtp || response.results.smtp.passed)
 
-    res.json(response)
-    return
+    responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
+    return res.json(response)
   } catch (error) {
     console.error("Validation error:", error)
     res.status(500).json({
