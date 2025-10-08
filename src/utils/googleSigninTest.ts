@@ -258,6 +258,25 @@ async function waitForElementAndType(page: Page, selectors: string[], text: stri
   return false
 }
 
+// Robust helper to wait for the first visible selector among many
+async function waitForFirstVisible(page: Page, selectors: string[], timeout = 15000): Promise<string | null> {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    for (const selector of selectors) {
+      try {
+        const el = await page.$(selector)
+        if (!el) continue
+        const visible = await el.isIntersectingViewport()
+        if (visible) return selector
+      } catch {
+        // ignore and continue
+      }
+    }
+    await new Promise((r) => setTimeout(r, 300))
+  }
+  return null
+}
+
 export async function testGoogleSignin(email: string): Promise<{ status: string; message: string }> {
   console.log(`🔐 Starting optimized Google sign-in test for: ${email}`)
 
@@ -340,14 +359,11 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
     // Wait a moment for any dynamic updates
     await new Promise((resolve) => setTimeout(resolve, 1000))
 
-    // Enhanced Next button selectors
+    // Tighten Next button selectors (remove unsupported :contains) and rely on IDs/classes
     const nextButtonSelectors = [
       "#identifierNext",
       'button[jsname="LgbsSe"]',
-      'button[type="button"]:not([disabled])',
-      ".VfPpkd-LgbsSe",
-      'button[aria-label*="next" i]',
-      'button:contains("Next")',
+      ".VfPpkd-LgbsSe", // Google primary buttons
       "[data-continue-button]",
       ".RveJvd",
     ]
@@ -361,87 +377,102 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
 
     console.log(`🔐 Next button clicked in ${Date.now() - startTime}ms`)
 
-    // Wait for response with longer timeout for slow networks
-    await new Promise((resolve) => setTimeout(resolve, 4000))
+    // Wait shortly for any navigation, but don't rely on it exclusively
+    try {
+      await Promise.race([
+        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 6000 }),
+        new Promise((r) => setTimeout(r, 6000)),
+      ])
+    } catch {
+      // ignore
+    }
 
-    // Check for results in parallel with enhanced selectors
-    const [errorMessage, passwordFound, challengeFound] = await Promise.all([
-      // Check for error messages with more comprehensive selectors
-      page
-        .evaluate(() => {
-          const errorSelectors = [
-            'div[jsname="B34EJ"]',
-            ".o6cuMc",
-            '[data-error="true"]',
-            ".Ekjuhf",
-            ".dEOOab",
-            '[role="alert"]',
-            ".LXRPh",
-            ".k6Zj8d",
-            ".GQ8Pzc",
-          ]
+    // Include real Google password field names and structures
+    const passwordSelectors = [
+      'input[type="password"]',
+      'input[name="Passwd"]',
+      '#password input[type="password"]',
+      '#password input[name="Passwd"]',
+      'input[aria-label*="Enter your password" i]',
+    ]
 
-          for (const selector of errorSelectors) {
-            const element = document.querySelector(selector)
-            if (element && element.textContent && element.textContent.trim()) {
-              return element.textContent.trim()
+    const challengeSelectors = [
+      "[data-challenge-id]",
+      "[data-challenge-type]",
+      ".challenge-page",
+      '[aria-label*="verify" i]',
+      '[aria-label*="challenge" i]',
+      ".tosPage",
+      ".captcha",
+    ]
+
+    // Common error container near email field
+    const errorSelectors = [
+      'div[jsname="B34EJ"]',
+      ".o6cuMc",
+      '[data-error="true"]',
+      ".Ekjuhf",
+      ".dEOOab",
+      '[role="alert"]',
+      ".LXRPh",
+      ".k6Zj8d",
+      ".GQ8Pzc",
+      '#identifierId[aria-invalid="true"] ~ div .jibhHc',
+    ]
+
+    // Try to detect outcome more deterministically with selector visibility checks
+    const firstHit =
+      (await waitForFirstVisible(page, passwordSelectors, 8000)) ||
+      (await waitForFirstVisible(page, errorSelectors, 2000)) ||
+      (await waitForFirstVisible(page, challengeSelectors, 2000))
+
+    let errorMessage: string | null = null
+    let passwordFound = false
+    let challengeFound = false
+
+    if (firstHit) {
+      // Determine which bucket matched
+      if (passwordSelectors.includes(firstHit)) {
+        passwordFound = true
+      } else if (challengeSelectors.includes(firstHit)) {
+        challengeFound = true
+      } else {
+        // Attempt to extract the error text from whichever error node we can find
+        try {
+          errorMessage = await page.evaluate((selectors) => {
+            for (const sel of selectors) {
+              const el = document.querySelector(sel)
+              if (el && el.textContent) {
+                const txt = el.textContent.trim()
+                if (txt) return txt
+              }
             }
-          }
-          return null
+            return null
+          }, errorSelectors)
+        } catch {
+          errorMessage = "An unknown error occurred"
+        }
+      }
+    } else {
+      // As a fallback, do one more pass checking for a password input by attribute (covers dynamic mounts)
+      try {
+        const hasPasswd = await page.evaluate(() => {
+          const el =
+            document.querySelector('input[name="Passwd"]') ||
+            document.querySelector('#password input[type="password"]') ||
+            document.querySelector('input[type="password"]')
+          return !!el && (el as HTMLElement).offsetParent !== null
         })
-        .catch(() => null),
-
-      // Check for password field with enhanced selectors
-      page
-        .evaluate(() => {
-          const passwordSelectors = [
-            'input[type="password"]',
-            'input[name="password"]',
-            "#password",
-            'input[aria-label*="password" i]',
-            'input[placeholder*="password" i]',
-          ]
-
-          for (const selector of passwordSelectors) {
-            const element = document.querySelector(selector)
-            if (element) {
-              const rect = element.getBoundingClientRect()
-              return rect.width > 0 && rect.height > 0 // Check if visible
-            }
-          }
-          return false
-        })
-        .catch(() => false),
-
-      // Check for challenge page with enhanced selectors
-      page
-        .evaluate(() => {
-          const challengeSelectors = [
-            "[data-challenge-id]",
-            "[data-challenge-type]",
-            ".challenge-page",
-            '[aria-label*="verify" i]',
-            '[aria-label*="challenge" i]',
-            ".tosPage",
-            ".captcha",
-          ]
-
-          for (const selector of challengeSelectors) {
-            const element = document.querySelector(selector)
-            if (element) {
-              return true
-            }
-          }
-          return false
-        })
-        .catch(() => false),
-    ])
+        passwordFound = !!hasPasswd
+      } catch {
+        // ignore
+      }
+    }
 
     const totalTime = Date.now() - startTime
     console.log(`🔐 Validation completed in ${totalTime}ms`)
 
     let result: { status: string; message: string }
-
     if (errorMessage) {
       result = { status: "error", message: errorMessage }
     } else if (passwordFound) {
@@ -449,7 +480,12 @@ export async function testGoogleSignin(email: string): Promise<{ status: string;
     } else if (challengeFound) {
       result = { status: "success", message: "Email is valid (reached challenge/verification step)" }
     } else {
-      result = { status: "unknown", message: "Could not determine result - no clear indicators found" }
+      // Make unknown less likely and include hint about anti-bot if repeatedly failing
+      result = {
+        status: "unknown",
+        message:
+          "Could not determine result - no clear indicators found (try again; headless/automation may be challenged by Google)",
+      }
     }
 
     // Cache the result
