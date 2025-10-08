@@ -194,3 +194,15 @@ MIT License - see LICENSE file for details.
 - IPv6 support
 - Caching layer for repeated validations
 \`\`\`
+
+Payload - Gowtham
+
+{
+    "email":"nija123maran@gmail.com",
+    "tests": { 
+        "smtp": true, 
+        "mx": false, 
+        "disposableDomain": false, 
+        "roleBased": false
+        }
+}
