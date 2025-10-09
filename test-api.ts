@@ -37,8 +37,12 @@ async function testEmailValidation() {
           console.log(`❌ Failed at: ${failedValidation[0]} - ${failedValidation[1].message}`)
         }
       }
-    } catch (error) {
-      console.log(`❌ Error testing ${email}:`, error)
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        console.log(`❌ Error testing ${email}:`, err.message)
+      } else {
+        console.log(`❌ Error testing ${email}:`, String(err))
+      }
     }
   }
 
@@ -48,10 +52,17 @@ async function testEmailValidation() {
     const healthResponse = await fetch(`${baseUrl}/health`)
     const healthResult = await healthResponse.json()
     console.log(`✅ Health check: ${healthResult.status}`)
-  } catch (error) {
-    console.log("❌ Health check failed:", error)
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      console.log("❌ Health check failed:", err.message)
+    } else {
+      console.log("❌ Health check failed:", String(err))
+    }
   }
 }
 
 // Run the test
-testEmailValidation().catch(console.error)
+testEmailValidation().catch((err: unknown) => {
+  if (err instanceof Error) console.error("Unexpected error:", err.message)
+  else console.error("Unexpected error:", String(err))
+})
