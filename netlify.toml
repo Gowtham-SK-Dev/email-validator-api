@@ -4,9 +4,11 @@
 [build]
   functions = "netlify/functions"
   environment = { NODE_VERSION = "20" }
+  command = "echo 'Skipping app build; deploying Netlify Functions only'"
 
 [functions]
   node_bundler = "esbuild"
+  included_files = ["src/data/disposable-domains.json"]
 
 [[redirects]]
   from = "/api/validate-email"

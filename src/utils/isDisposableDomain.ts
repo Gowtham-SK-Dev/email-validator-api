@@ -1,5 +1,4 @@
-import * as fs from "fs/promises"
-import * as path from "path"
+import disposableDomainsList from "../data/disposable-domains.json"
 
 interface ValidationResult {
   passed: boolean
@@ -9,29 +8,11 @@ interface ValidationResult {
 
 let disposableDomains: Set<string> | null = null
 
-async function loadDisposableDomains(): Promise<Set<string>> {
-  if (disposableDomains) {
-    return disposableDomains
-  }
-
-  try {
-    const filePath = path.join(__dirname, "../data/disposable-domains.json")
-    const data = await fs.readFile(filePath, "utf-8")
-    const domains = JSON.parse(data)
-
-    if (Array.isArray(domains)) {
-      disposableDomains = new Set(domains.map((domain) => domain.toLowerCase()))
-    } else {
-      console.warn("Disposable domains file is not an array, using empty set")
-      disposableDomains = new Set()
-    }
-
-    return disposableDomains
-  } catch (error) {
-    console.warn("Could not load disposable domains file, using empty set:", error)
-    disposableDomains = new Set()
-    return disposableDomains
-  }
+function loadDisposableDomainsSync(): Set<string> {
+  if (disposableDomains) return disposableDomains
+  const arr = Array.isArray(disposableDomainsList) ? disposableDomainsList : []
+  disposableDomains = new Set(arr.map((d: unknown) => String(d).toLowerCase()))
+  return disposableDomains
 }
 
 export async function isDisposableDomain(email: string): Promise<ValidationResult> {
@@ -45,7 +26,7 @@ export async function isDisposableDomain(email: string): Promise<ValidationResul
       }
     }
 
-    const disposableSet = await loadDisposableDomains()
+    const disposableSet = loadDisposableDomainsSync()
 
     if (disposableSet.has(domain)) {
       return {
