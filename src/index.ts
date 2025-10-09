@@ -1,65 +1,71 @@
-import express, { Request, Response, NextFunction } from "express";
-import cors from "cors";
-import morgan from "morgan";
+import express from "express"
+import cors from "cors"
+import morgan from "morgan"
+import emailRoutes from "./routes/email"
+import batchRoutes from "./routes/email-batch"
+import { cleanupGoogleSigninTest } from "./utils/googleSigninTest"
 
-import emailRoutes from "./routes/email";
-import batchRoutes from "./routes/email-batch";
-import { cleanupGoogleSigninTest } from "./utils/googleSigninTest";
+const app: express.Express = express()
+// Update the PORT configuration to use the Vercel environment variable
+const PORT = process.env.PORT || 3000
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// Middleware
+app.use(cors())
+app.use(express.json())
+app.use(morgan("combined"))
 
-// --- Middleware ---
-app.use(cors());
-app.use(express.json());
-app.use(morgan("combined"));
+// Routes
+app.use("/api", emailRoutes)
+app.use("/api", batchRoutes)
 
-// --- Routes ---
-app.use("/api", emailRoutes);          // POST /api/validate-email
-app.use("/api", batchRoutes);          // POST /api/validate-emails-batch
-
-// --- Health check ---
-app.get("/health", (_req: Request, res: Response) => {
+// Health check route
+app.get("/health", (req: express.Request, res: express.Response): void => {
   res.status(200).json({
     status: "OK",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     version: "1.0.0",
-  });
-});
+  })
+})
 
-// --- Error handling ---
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error("Error:", err.message);
+// Error handling middleware
+app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Error:", err.message)
   res.status(500).json({
     error: "Internal server error",
     message: err.message,
-  });
-});
+  })
+})
 
-// --- 404 handler ---
-app.use("*", (_req: Request, res: Response) => {
-  res.status(404).json({ error: "Route not found" });
-});
+// 404 handler
+app.use("*", (req: express.Request, res: express.Response): void => {
+  res.status(404).json({
+    error: "Route not found",
+  })
+})
 
-// --- Graceful shutdown ---
-const shutdown = async () => {
-  console.log("🔄 Graceful shutdown: cleaning up...");
-  await cleanupGoogleSigninTest();
-  process.exit(0);
-};
+// Graceful shutdown handling
+process.on("SIGTERM", async () => {
+  console.log("🔄 SIGTERM received, cleaning up...")
+  await cleanupGoogleSigninTest()
+  process.exit(0)
+})
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGINT", async () => {
+  console.log("🔄 SIGINT received, cleaning up...")
+  await cleanupGoogleSigninTest()
+  process.exit(0)
+})
 
-// --- Start server ---
+// Start the server in all environments
 app.listen(PORT, () => {
-  console.log(`🚀 Email Validator API running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`📧 Validate emails: POST http://localhost:${PORT}/api/validate-email`);
-  console.log(`📧 Batch validate: POST http://localhost:${PORT}/api/validate-emails-batch`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
-  console.log(`🔧 Serverless: ${!!(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME)}`);
-});
+  console.log(`🚀 Email Validator API running on port ${PORT}`)
+  console.log(`📊 Health check: http://localhost:${PORT}/health`)
+  console.log(`📧 Validate emails: POST http://localhost:${PORT}/api/validate-email`)
+  console.log(`📧 Batch validate: POST http://localhost:${PORT}/api/validate-emails-batch`)
+  console.log(`📊 Performance metrics: GET http://localhost:${PORT}/api/performance-metrics`)
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
+  console.log(`🔧 Serverless: ${!!(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME)}`)
+})
 
-export default app;
+export default app
