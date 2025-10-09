@@ -1,9 +1,7 @@
-# Root-level netlify.toml
-
 [build]
   command = "echo 'Skipping app build; deploying Netlify Functions only'"
-  publish = "."                       # Prevents Netlify Next.js plugin errors
   functions = "netlify/functions"
+  publish = "dist"  # Must be different from repo root
   environment = { NODE_VERSION = "20" }
 
 [functions]
