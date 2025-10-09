@@ -13,5 +13,3 @@
   to = "/.netlify/functions/validate-email"
   status = 200
   force = true
-[plugins]
-  ignore = ["@netlify/plugin-nextjs"]
