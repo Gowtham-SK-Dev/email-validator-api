@@ -7,7 +7,17 @@ import { isRoleEmail } from "../../src/utils/isRoleEmail"
 const CACHE_TTL = 5 * 60 * 1000
 const responseCache = new Map<string, { timestamp: number; value: any }>()
 
-export const handler = async (event, context) => {
+type NetlifyEvent = {
+  httpMethod: string
+  body: string | null
+}
+type NetlifyResponse = {
+  statusCode: number
+  headers?: Record<string, string>
+  body: string
+}
+
+export const handler = async (event: NetlifyEvent, _context?: unknown): Promise<NetlifyResponse> => {
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 200,
@@ -32,7 +42,8 @@ export const handler = async (event, context) => {
   let checkInboxLegacy = true
   let tests: { smtp?: boolean; mx?: boolean; disposableDomain?: boolean; roleBased?: boolean } | undefined
   try {
-    const body = JSON.parse(event.body || "{}")
+    const raw = event.body ?? "{}"
+    const body = JSON.parse(raw) as any
     email = body.email
     if (typeof body.checkInbox === "boolean") {
       checkInboxLegacy = body.checkInbox
