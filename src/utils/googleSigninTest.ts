@@ -83,7 +83,7 @@ class BrowserPool {
   //   return launchOptions
   // }
   
-  private getLaunchOptions() {
+ private getLaunchOptions() {
   const launchOptions: any = {
     headless: "new",
     args: [
@@ -123,8 +123,13 @@ class BrowserPool {
     ],
   };
 
-  if (!isNetlify) {
-    // Only use local Chrome if available
+  if (isNetlify) {
+    // On Netlify, use Puppeteer's bundled Chromium
+    // Don't force an executablePath to a system Chrome
+    // The bundled Chromium will be used automatically
+    launchOptions.args.push("--no-sandbox", "--disable-setuid-sandbox");
+  } else {
+    // Locally, use system Chrome if found
     const chromePath = findChromeExecutable();
     if (chromePath) {
       launchOptions.executablePath = chromePath;
@@ -133,6 +138,7 @@ class BrowserPool {
 
   return launchOptions;
 }
+
 
 
   async getBrowser(): Promise<Browser> {
