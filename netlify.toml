@@ -1,7 +1,7 @@
 [build]
   command = "echo 'Skipping app build; deploying Netlify Functions only'"
   functions = "netlify/functions"
-  publish = "dist"  # Must be different from repo root
+  publish = "dist"  # Must be a separate folder from base directory
   environment = { NODE_VERSION = "20" }
 
 [functions]
@@ -13,3 +13,5 @@
   to = "/.netlify/functions/validate-email"
   status = 200
   force = true
+[plugins]
+  ignore = ["@netlify/plugin-nextjs"]
