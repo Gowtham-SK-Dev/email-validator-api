@@ -1,11 +1,11 @@
-import express from "express"
+import express, { Router, Request, Response } from "express"
 import { validateSyntax } from "../utils/validateSyntax"
 import { validateMx } from "../utils/validateMx"
 import { validateSmtp } from "../utils/validateSmtp"
 import { isDisposableDomain } from "../utils/isDisposableDomain"
 import { isRoleEmail } from "../utils/isRoleEmail"
 
-const router: express.Router = express.Router()
+const router: Router = express.Router() // explicit type annotation
 
 interface MxRecordWithIp {
   exchange: string
@@ -40,15 +40,13 @@ const responseCache = new Map<
   }
 >()
 
-router.post("/validate-email", async (req: express.Request, res: express.Response): Promise<void> => {
+router.post("/validate-email", async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, checkInbox: checkInboxLegacy = true, tests } = req.body
 
     if (!email || typeof email !== "string") {
-      res.status(400).json({
-        error: "Email is required and must be a string",
-      })
-      return 
+      res.status(400).json({ error: "Email is required and must be a string" })
+      return
     }
 
     const enableSmtp = typeof tests?.smtp === "boolean" ? tests.smtp : checkInboxLegacy
@@ -60,7 +58,7 @@ router.post("/validate-email", async (req: express.Request, res: express.Respons
     const cached = responseCache.get(cacheKey)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       res.json(cached.value)
-      return 
+      return
     }
 
     const response: EmailValidationResponse = {
@@ -70,26 +68,25 @@ router.post("/validate-email", async (req: express.Request, res: express.Respons
         syntax: { passed: false, message: "" },
         mx: { passed: !enableMx, message: enableMx ? "" : "Skipped MX check (by request)" },
         smtp: { passed: !enableSmtp, message: enableSmtp ? "" : "Skipped SMTP check (by request)" },
-        disposableDomain: {
-          passed: !enableDisposable,
-          message: enableDisposable ? "" : "Skipped disposable-domain check (by request)",
-        },
+        disposableDomain: { passed: !enableDisposable, message: enableDisposable ? "" : "Skipped disposable-domain check (by request)" },
         roleBased: { passed: !enableRole, message: enableRole ? "" : "Skipped role-based check (by request)" },
       },
     }
 
+    // Syntax validation
     const syntaxResult = validateSyntax(email)
     response.results.syntax = syntaxResult
     if (!syntaxResult.passed) {
       response.valid = false
       responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
-       res.json(response)
-       return
+      res.json(response)
+      return
     }
 
     const domain = email.split("@")[1]?.toLowerCase()
     const isGmail = domain === "gmail.com"
 
+    // Role-based validation
     if (enableRole) {
       if (isGmail) {
         response.results.roleBased = {
@@ -102,39 +99,51 @@ router.post("/validate-email", async (req: express.Request, res: express.Respons
         if (!roleResult.passed) {
           response.valid = false
           responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
-           res.json(response)
-           return
+          res.json(response)
+          return
         }
       }
     }
 
+    // Gmail shortcut
     if (isGmail) {
-      if (enableDisposable)
-        response.results.disposableDomain = { passed: true, message: "Gmail is not a disposable domain" }
+      if (enableDisposable) response.results.disposableDomain = { passed: true, message: "Gmail is not a disposable domain" }
       if (enableMx) response.results.mx = { passed: true, message: "Gmail has valid MX records" }
     } else {
-      const tasks: Promise<any>[] = []
-      if (enableDisposable) tasks.push(isDisposableDomain(email).then((r) => (response.results.disposableDomain = r)))
-      if (enableMx) tasks.push(validateMx(email).then((r) => (response.results.mx = r)))
+      const tasks: Promise<void>[] = []
+
+      if (enableDisposable)
+        tasks.push(
+          isDisposableDomain(email).then((r) => {
+            response.results.disposableDomain = r
+            return // <-- explicitly return void
+          })
+        )
+      if (enableMx)
+        tasks.push(
+          validateMx(email).then((r) => {
+            response.results.mx = r
+            return // <-- explicitly return void
+          })
+        )
+
       if (tasks.length) await Promise.all(tasks)
 
-      if (
-        (enableDisposable && !response.results.disposableDomain.passed) ||
-        (enableMx && !response.results.mx.passed)
-      ) {
+      if ((enableDisposable && !response.results.disposableDomain.passed) || (enableMx && !response.results.mx.passed)) {
         response.valid = false
         responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
-        
         res.json(response)
-        return 
+        return
       }
     }
 
+    // SMTP validation
     if (enableSmtp) {
       const smtpResult = await validateSmtp(email)
       response.results.smtp = smtpResult
     }
 
+    // Compute final validity
     response.valid =
       response.results.syntax.passed &&
       (!enableRole || response.results.roleBased.passed) &&
@@ -143,10 +152,15 @@ router.post("/validate-email", async (req: express.Request, res: express.Respons
       (!enableSmtp || response.results.smtp.passed)
 
     responseCache.set(cacheKey, { timestamp: Date.now(), value: response })
-     res.json(response)
-     return
-  } catch (error) {
-    console.error("Validation error:", error)
+    res.json(response)
+    return
+  } catch (error: unknown) {
+    // Handle unknown error
+    if (error instanceof Error) {
+      console.error("Validation error:", error.message)
+    } else {
+      console.error("Validation error:", error)
+    }
     res.status(500).json({
       error: "Internal server error during validation",
       message: error instanceof Error ? error.message : "Unknown error",
