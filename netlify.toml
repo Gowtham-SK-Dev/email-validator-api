@@ -1,10 +1,10 @@
-# Ensure the file is named netlify.toml (not netlify.toml or netlify.toml.txt)
-# and is placed at the root of your repository.
+# Root-level netlify.toml
 
 [build]
+  command = "echo 'Skipping app build; deploying Netlify Functions only'"
+  publish = "."                       # Prevents Netlify Next.js plugin errors
   functions = "netlify/functions"
   environment = { NODE_VERSION = "20" }
-  command = "echo 'Skipping app build; deploying Netlify Functions only'"
 
 [functions]
   node_bundler = "esbuild"
