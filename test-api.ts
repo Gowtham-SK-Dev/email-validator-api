@@ -34,7 +34,7 @@ async function testEmailValidation() {
           ([_, validation]: [string, any]) => !validation.passed,
         )
         if (failedValidation) {
-          console.log(`❌ Failed at: ${failedValidation[0]} - ${failedValidation[1].message}`)
+          console.log(`❌ Failed at: ${failedValidation[0]}`)
         }
       }
     } catch (err: unknown) {
