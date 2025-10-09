@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import { Router, Request, Response } from "express";
 import { validateSyntax } from "../src/utils/validateSyntax";
 import { validateMx } from "../src/utils/validateMx";
 import { validateSmtp } from "../src/utils/validateSmtp";
@@ -28,15 +28,12 @@ interface EmailValidationResponse {
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const responseCache = new Map<string, { timestamp: number; value: EmailValidationResponse }>();
 
-export const router = express.Router();
+export const router: Router = Router();
 
 router.post("/validate-email", async (req: Request, res: Response) => {
-  // Enable CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  // Handle preflight requests
   if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
@@ -46,13 +43,11 @@ router.post("/validate-email", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Email is required and must be a string" });
     }
 
-    // Normalize test flags
     const enableSmtp = typeof tests?.smtp === "boolean" ? tests.smtp : checkInboxLegacy;
     const enableMx = typeof tests?.mx === "boolean" ? tests.mx : true;
     const enableDisposable = typeof tests?.disposableDomain === "boolean" ? tests.disposableDomain : true;
     const enableRole = typeof tests?.roleBased === "boolean" ? tests.roleBased : true;
 
-    // Cache key per email + tests selection
     const cacheKey = `${email}|smtp:${enableSmtp ? 1 : 0}|mx:${enableMx ? 1 : 0}|disp:${enableDisposable ? 1 : 0}|role:${enableRole ? 1 : 0}`;
     const cached = responseCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -71,7 +66,7 @@ router.post("/validate-email", async (req: Request, res: Response) => {
       },
     };
 
-    // --- 1) Syntax validation
+    // 1) Syntax check
     const syntaxResult = validateSyntax(email);
     response.results.syntax = syntaxResult;
     if (!syntaxResult.passed) {
@@ -82,7 +77,7 @@ router.post("/validate-email", async (req: Request, res: Response) => {
     const domain = email.split("@")[1]?.toLowerCase();
     const isGmail = domain === "gmail.com";
 
-    // --- 2) Role-based check
+    // 2) Role-based
     if (enableRole) {
       if (isGmail) {
         response.results.roleBased = { passed: true, message: "Gmail addresses are not checked for role-based patterns" };
@@ -96,24 +91,13 @@ router.post("/validate-email", async (req: Request, res: Response) => {
       }
     }
 
-    // --- 3) Disposable domain + 4) MX check
-    const promises: Array<Promise<void>> = [];
-
+    // 3) Disposable & MX
     if (isGmail) {
       if (enableDisposable) response.results.disposableDomain = { passed: true, message: "Gmail is not a disposable domain" };
       if (enableMx) response.results.mx = { passed: true, message: "Gmail has valid MX records" };
     } else {
-      if (enableDisposable) {
-        promises.push(
-          isDisposableDomain(email).then((result) => (response.results.disposableDomain = result))
-        );
-      }
-      if (enableMx) {
-        promises.push(
-          validateMx(email).then((result) => (response.results.mx = result))
-        );
-      }
-      if (promises.length) await Promise.all(promises);
+      if (enableDisposable) response.results.disposableDomain = await isDisposableDomain(email);
+      if (enableMx) response.results.mx = await validateMx(email);
 
       if ((enableDisposable && !response.results.disposableDomain.passed) || (enableMx && !response.results.mx.passed)) {
         responseCache.set(cacheKey, { timestamp: Date.now(), value: response });
@@ -121,13 +105,12 @@ router.post("/validate-email", async (req: Request, res: Response) => {
       }
     }
 
-    // --- 5) SMTP check
+    // 4) SMTP
     if (enableSmtp) {
-      const smtpResult = await validateSmtp(email);
-      response.results.smtp = smtpResult;
+      response.results.smtp = await validateSmtp(email);
     }
 
-    // --- Compute final valid
+    // 5) Compute final validity
     response.valid =
       response.results.syntax.passed &&
       (!enableRole || response.results.roleBased.passed) &&
@@ -135,7 +118,6 @@ router.post("/validate-email", async (req: Request, res: Response) => {
       (!enableMx || response.results.mx.passed) &&
       (!enableSmtp || response.results.smtp.passed);
 
-    // Cache and return
     responseCache.set(cacheKey, { timestamp: Date.now(), value: response });
     return res.json(response);
   } catch (err: unknown) {
