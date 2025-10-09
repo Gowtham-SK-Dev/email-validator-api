@@ -32,56 +32,108 @@ class BrowserPool {
     }
   }
 
+  // private getLaunchOptions() {
+  //   let chromePath = findChromeExecutable()
+  //   const launchOptions: any = {
+  //     headless: "new",
+  //     args: [
+  //       "--no-sandbox",
+  //       "--disable-setuid-sandbox",
+  //       "--disable-dev-shm-usage",
+  //       "--disable-accelerated-2d-canvas",
+  //       "--no-first-run",
+  //       "--no-zygote",
+  //       "--disable-gpu",
+  //       "--disable-web-security",
+  //       "--disable-features=VizDisplayCompositor",
+  //       "--disable-background-timer-throttling",
+  //       "--disable-backgrounding-occluded-windows",
+  //       "--disable-renderer-backgrounding",
+  //       "--disable-field-trial-config",
+  //       "--disable-back-forward-cache",
+  //       "--disable-ipc-flooding-protection",
+  //       "--window-size=1280,800",
+  //       "--disable-blink-features=AutomationControlled",
+  //       "--disable-extensions",
+  //       "--disable-plugins",
+  //       "--disable-default-apps",
+  //       "--disable-sync",
+  //       "--disable-translate",
+  //       "--hide-scrollbars",
+  //       "--mute-audio",
+  //       "--no-default-browser-check",
+  //       "--no-pings",
+  //       "--disable-logging",
+  //       "--disable-dev-tools",
+  //       "--disable-crash-reporter",
+  //       "--disable-in-process-stack-traces",
+  //       "--disable-logging-redirect",
+  //       "--log-level=3",
+  //       "--silent",
+  //     ],
+  //   }
+
+  //   if (isNetlify) {
+  //     chromePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium-browser"
+  //     launchOptions.executablePath = chromePath
+  //   } else if (chromePath) {
+  //     launchOptions.executablePath = chromePath
+  //   }
+
+  //   return launchOptions
+  // }
+  
   private getLaunchOptions() {
-    let chromePath = findChromeExecutable()
-    const launchOptions: any = {
-      headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-first-run",
-        "--no-zygote",
-        "--disable-gpu",
-        "--disable-web-security",
-        "--disable-features=VizDisplayCompositor",
-        "--disable-background-timer-throttling",
-        "--disable-backgrounding-occluded-windows",
-        "--disable-renderer-backgrounding",
-        "--disable-field-trial-config",
-        "--disable-back-forward-cache",
-        "--disable-ipc-flooding-protection",
-        "--window-size=1280,800",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-extensions",
-        "--disable-plugins",
-        "--disable-default-apps",
-        "--disable-sync",
-        "--disable-translate",
-        "--hide-scrollbars",
-        "--mute-audio",
-        "--no-default-browser-check",
-        "--no-pings",
-        "--disable-logging",
-        "--disable-dev-tools",
-        "--disable-crash-reporter",
-        "--disable-in-process-stack-traces",
-        "--disable-logging-redirect",
-        "--log-level=3",
-        "--silent",
-      ],
-    }
+  const launchOptions: any = {
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--no-first-run",
+      "--no-zygote",
+      "--disable-gpu",
+      "--disable-web-security",
+      "--disable-features=VizDisplayCompositor",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-field-trial-config",
+      "--disable-back-forward-cache",
+      "--disable-ipc-flooding-protection",
+      "--window-size=1280,800",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-extensions",
+      "--disable-plugins",
+      "--disable-default-apps",
+      "--disable-sync",
+      "--disable-translate",
+      "--hide-scrollbars",
+      "--mute-audio",
+      "--no-default-browser-check",
+      "--no-pings",
+      "--disable-logging",
+      "--disable-dev-tools",
+      "--disable-crash-reporter",
+      "--disable-in-process-stack-traces",
+      "--disable-logging-redirect",
+      "--log-level=3",
+      "--silent",
+    ],
+  };
 
-    if (isNetlify) {
-      chromePath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium-browser"
-      launchOptions.executablePath = chromePath
-    } else if (chromePath) {
-      launchOptions.executablePath = chromePath
+  if (!isNetlify) {
+    // Only use local Chrome if available
+    const chromePath = findChromeExecutable();
+    if (chromePath) {
+      launchOptions.executablePath = chromePath;
     }
-
-    return launchOptions
   }
+
+  return launchOptions;
+}
+
 
   async getBrowser(): Promise<Browser> {
     if (!this.isInitialized) {
