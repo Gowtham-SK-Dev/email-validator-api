@@ -1,23 +1,16 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node"
+import express, { Request, Response } from "express";
 
-export default function handler(req: VercelRequest, res: VercelResponse): void {
+export const router = express.Router();
+
+router.get("/health", (req: Request, res: Response) => {
   // Enable CORS
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS")
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type")
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   // Handle preflight requests
   if (req.method === "OPTIONS") {
-    res.status(200).end()
-    return
-  }
-
-  // Only allow GET requests
-  if (req.method !== "GET") {
-    res.status(405).json({
-      error: "Method not allowed. Use GET.",
-    })
-    return
+    return res.status(200).end();
   }
 
   res.status(200).json({
@@ -25,5 +18,5 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     version: "1.0.0",
-  })
-}
+  });
+});
